@@ -5,7 +5,7 @@ This is the job object, carries the information of route, processing time, due d
 import numpy as np
 
 
-class job:
+class Job:
     def __init__(self, env, *args, **kwargs):
         self.env = env
         # associated attributes

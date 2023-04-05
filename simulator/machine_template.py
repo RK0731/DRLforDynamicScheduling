@@ -9,10 +9,9 @@ import simpy
 import numpy as np
 import torch
 from tabulate import tabulate
-import sequencing
 
 
-class machine:
+class Machine:
     def __init__(self, env, index, *args, **kwargs):
         # initialize the environment of simulation
         self.env = env
