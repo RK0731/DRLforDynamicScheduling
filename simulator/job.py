@@ -17,8 +17,17 @@ class Job:
         self.processing_record = []
 
 
+    def arrival(self, machine):
+        pass
+
+
     def departure(self):
         pass
+
+
+    # record each operation
+    def record_operation(self, details):
+        self.processing_record.append(details)
 
 
     def completion(self):

@@ -3,10 +3,17 @@
 
 ### For myself
 writing/
+*test*
+*log*
 
 ### macOS ###
 # General
 .DS_Store
+**/.DS_store
+**/._.DS_Store
+.ipynb_checkpoints
+**/.ipynb_checkpoints
+**/._.ipynb_checkpoints
 .AppleDouble
 .LSOverride
 
