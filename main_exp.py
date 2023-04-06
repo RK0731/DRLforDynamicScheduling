@@ -4,7 +4,7 @@ import os
 import simulator.job as JOB
 import simulator.machine as MACHINE
 
-class Factory:
+class Shopfloor:
     def __init__(self):
         # create the common logger
         self.sim_logger = logging.getLogger(__name__)

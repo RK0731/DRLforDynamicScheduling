@@ -1,6 +1,9 @@
 # Created by https://www.toptal.com/developers/gitignore/api/macos,python
 # Edit at https://www.toptal.com/developers/gitignore?templates=macos,python
 
+### For myself
+writing/
+
 ### macOS ###
 # General
 .DS_Store
@@ -37,7 +40,7 @@ Temporary Items
 ### Python ###
 # Byte-compiled / optimized / DLL files
 __pycache__/
-__pycache__
+/__pycache__
 *.py[cod]
 *$py.class
 
