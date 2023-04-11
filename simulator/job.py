@@ -6,13 +6,17 @@ import numpy as np
 
 
 class Job:
-    def __init__(self, env, *args, **kwargs):
+    def __init__(self, env, logger, *args, **kwargs):
         self.env = env
+        self.logger = logger
         # associated attributes
         self.arrival_t = self.env.now
         self.j_idx = kwargs['job_index']
         self.pt = kwargs['processing_time']
         self.due = kwargs['due_date']
+        # optional attributes
+        if 'transfer_time' in kwargs:
+            self.transfer_t = kwargs['transfer_time']
         # data recording
         self.processing_record = []
 
@@ -25,7 +29,6 @@ class Job:
         pass
 
 
-    # record each operation
     def record_operation(self, details):
         self.processing_record.append(details)
 

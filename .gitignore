@@ -5,6 +5,8 @@
 writing/
 *test*
 *log*
+*figure*
+*result*
 
 ### macOS ###
 # General

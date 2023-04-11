@@ -7,6 +7,7 @@ import argparse
 
 import simulator.job as JOB
 import simulator.machine as MACHINE
+import simulator.recorder as RECORDER
 
 class Shopfloor:
     def __init__(self, **kwargs):
