@@ -28,13 +28,19 @@ class Director:
         self.m_list = kwargs['machine_list'] # get a list of all machines
         self.m_no = len(self.m_list) # related to the number of operations
         self.pt_range = kwargs['pt_range'] # lower and upper bound of processing time
-        self.exp_pt = np.average(self.pt_range) - 0.5 # expected processing time of individual operations
+        self.exp_pt = np.average(self.pt_range) # expected processing time of individual operations
         # variables to track the job related system status
         self.in_system_job_no = 0
-        self.in_system_job_no_dict = {}
         self.j_idx = 0
         self.tightness = kwargs['due_tightness'] # due date tightness
         self.E_utliz = kwargs['E_utliz'] # expected utlization rate of machines
+        # produce the feature of new job arrivals
+        self.beta = self.exp_pt / self.E_utliz # beta is the average time interval between job arrivals
+        # number of new jobs arrive within simulation
+        self.total_no = np.round(self.span/self.beta).astype(int)
+        # the interval between job arrivals by exponential distribution
+        self.arrival_interval = np.random.exponential(self.beta, self.total_no).round()
+        self.initial_job_assignment()
         ### process the job arrival function
         self.env.process(self.new_job_arrival())
         '''
@@ -76,53 +82,7 @@ class Director:
         self.mean_dict = {}
         self.std_dict = {}
         self.expected_tardiness_dict = {}
-        # decide the feature of new job arrivals
-        # beta is the average time interval between job arrivals
-        # let beta equals half of the average time of single operation
-        self.beta = self.exp_pt / self.E_utliz
-        # number of new jobs arrive within simulation
-        self.total_no = np.round(self.span/self.beta).astype(int)
-        # the interval between job arrivals by exponential distribution
-        self.arrival_interval = np.random.exponential(self.beta, self.total_no).round()
-        self.initial_job_assignment()
 
-
-    def initial_job_assignment(self):
-        sqc_seed = np.arange(self.no_machines)
-        for m_idx,m in enumerate(self.m_list): # for each machine
-            np.random.shuffle(sqc_seed)
-            sqc = np.concatenate([np.array([m_idx]),sqc_seed[sqc_seed != m_idx]]) # let the index of machine of first operation equals index of current machine
-            # allocate the job index to corrsponding workcenter's queue
-            self.sequence_list.append(sqc)
-            # produce processing time of job, get corresponding remaining_pt_list
-            ptl = np.random.randint(self.pt_range[0], self.pt_range[1], size = [self.no_machines])
-            self.pt_list.append(ptl)
-            self.record_job_feature(self.j_idx,ptl)
-            # rearrange the order of ptl to get remaining pt list, so we can simply delete the first element after each stage of production
-            remaining_ptl = ptl[sqc]
-            self.remaining_pt_list.append(remaining_ptl)
-            # produce the due date for job
-            exp_pt = ptl.mean()
-            due = np.round(exp_pt*self.no_machines * np.random.uniform(1, self.tightness))
-            # record the creation time and due date of job
-            self.create_time.append(0)
-            self.due_list.append(due)
-            # update the in-system-job number
-            self.record_job_arrival()
-            # operation record, path, wait time, decision points, slack change
-            self.production_record[self.j_idx] = [[],[],[],[]]
-            '''after creation of new job, add it to machine'''
-            m.queue.append(self.j_idx)
-            m.sequence_list.append(np.delete(sqc,0)) # the added sequence is the one without first element, coz it's been dispatched
-            m.remaining_pt_list.append(remaining_ptl)
-            m.due_list.append(due)
-            m.slack_upon_arrival.append(due - self.env.now - remaining_ptl.sum())
-            m.arrival_time_list.append(self.env.now)
-            # after assigned the initial job to machine, activate its sufficient stock event
-            m.sufficient_stock.succeed()
-            self.j_idx += 1 # and update the index of job
-            if self.print:
-                print("**INITIAL ARRIVAL: Job %s, time:%s, sqc:%s, pt(0->m):%s, due:%s"%(self.j_idx, self.env.now, sqc_seed ,ptl, due))
 
     def new_job_arrival(self):
         # main process
