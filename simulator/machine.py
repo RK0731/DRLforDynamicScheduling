@@ -14,10 +14,11 @@ from sequencing_rule import *
 
 
 class Machine:
-    def __init__(self, env, logger, *args, **kwargs):
+    def __init__(self, env, logger, recorder, *args, **kwargs):
         # initialize the environment of simulation
         self.env = env
         self.logger = logger
+        self.recorder = recorder
         self.m_idx = kwargs['m_idx']
         # each machine will have an independent storage for each type of job information
         # initialize all job-related information storage as empty lists
@@ -31,20 +32,14 @@ class Machine:
         self.slack_upon_arrival = [] # slack record of queuing jobs
         self.no_jobs_record = []
         # the time that agent make current and next decision
-        self.decision_point = 0
+        self.decision_time = 0
         self.release_time = 0
 
         # Initialize the possible events during production
         self.sufficient_stock = self.env.event()
-        # working condition in shut down and breakdowns
+        # working condition in shut down or breakdown
         self.working_event = self.env.event()
-        # this is the time that machine needs to recover from breakdown
-        # initial value is 0, later will be changed by "breakdown_creation" module
-        self.restart_time = 0
-        # Initialize the events'states
-        # if the queue is not empty
-        if not len(self.queue):
-            self.sufficient_stock.succeed()
+        self.restoration_time = 0
         # no shutdown, no breakdown at beginning
         self.working_event.succeed()
         # initialize the data for learning and recordiing
@@ -56,11 +51,11 @@ class Machine:
                 self.logger.info("Machine {} uses {} sequencing rule".format(self.m_idx, kwargs['sqc_rule']))
             except Exception as e:
                 self.logger.error("Sequencing rule assigned to machine {} is invalid! Invalid entry: {}".format(self.m_idx, kwargs['sqc_rule']))
-                self.logger.error()
+                self.logger.error(str(e))
                 raise Exception
         else:
             # default sequencing rule is FIFO
-            self.logger.info("Machine {} uses {} default FIFO rule".format(self.m_idx))
+            self.logger.info("Machine {} uses default FIFO rule".format(self.m_idx))
             self.job_sequencing = FIFO
         # record extra data for learning, initially not activated, can be activated by brains
         self.sequencing_learning_event = self.env.event()
@@ -100,16 +95,16 @@ class Machine:
 
     # The main function, simulates the production
     def production(self):
-        # first check the initial queue/stock level, if none, idle begines
-        if not len(self.queue):
-            # triggered the idle
+        # first check the initial queue/stock level
+        if len(self.queue) < 1:
+            # enter the idle status
             yield self.env.process(self.idle())
         # update information of queuing jobs at the end of initial phase
         self.state_update_all()
         # the loop that will run till the ned of simulation
         while True:
             # record the time of the sequencing decision (select a job to process), used as the index of produciton record in job creator
-            self.decision_point = self.env.now
+            self.decision_time = self.env.now
             self.no_jobs_record.append(len(self.queue))
             # if we have more than one queuing jobs, sequencing is required
             if len(self.queue)-1:
@@ -169,7 +164,7 @@ class Machine:
         self.logger("BKD: Machine {} breaks at time {}".format(self.m_idx, self.env.now))
         start = self.env.now
         # simply update the available time of that machines
-        self.available_time = self.restart_time + self.cumulative_pt
+        self.available_time = self.restoration_time + self.cumulative_pt
         # suspend the production here, untill the working_event is triggered
         yield self.working_event
         self.breakdown_record.append([(start, self.env.now - start), self.m_idx])
@@ -403,9 +398,9 @@ class Machine:
         # only when they have to choose from several queuing jobs
         try:
             # check whether corresponding experience exists, if not, ends at this line
-            self.event_creator.incomplete_rep_memo[self.m_idx][self.decision_point]
-            #print('PARAMETERS',self.m_idx,self.decision_point,self.env.now)
-            #print('BEFORE\n',self.event_creator.incomplete_rep_memo[self.m_idx][self.decision_point])
+            self.event_creator.incomplete_rep_memo[self.m_idx][self.decision_time]
+            #print('PARAMETERS',self.m_idx,self.decision_time,self.env.now)
+            #print('BEFORE\n',self.event_creator.incomplete_rep_memo[self.m_idx][self.decision_time])
             # if yes, get the global state
             local_data = self.sequencing_data_generation()
             s_t = self.build_state(local_data)
@@ -413,14 +408,14 @@ class Machine:
             r_t = self.reward_function() # can change the reward function, by sepecifying before the training
             #print(self.env.now, r_t)
             self.event_creator.sqc_reward_record.append([self.env.now, r_t])
-            self.event_creator.incomplete_rep_memo[self.m_idx][self.decision_point] += [s_t, r_t]
+            self.event_creator.incomplete_rep_memo[self.m_idx][self.decision_time] += [s_t, r_t]
             #print(self.event_creator.incomplete_rep_memo[self.m_idx])
-            #print(self.event_creator.incomplete_rep_memo[self.m_idx][self.decision_point])
-            complete_exp = self.event_creator.incomplete_rep_memo[self.m_idx].pop(self.decision_point)
+            #print(self.event_creator.incomplete_rep_memo[self.m_idx][self.decision_time])
+            complete_exp = self.event_creator.incomplete_rep_memo[self.m_idx].pop(self.decision_time)
             # and add it to rep_memo
             self.event_creator.rep_memo[self.m_idx].append(complete_exp)
             #print(self.event_creator.rep_memo[self.m_idx])
-            #print('AFTER\n',self.event_creator.incomplete_rep_memo[self.m_idx][self.decision_point])
+            #print('AFTER\n',self.event_creator.incomplete_rep_memo[self.m_idx][self.decision_time])
             #print(self.m_idx,self.env.now,'state: ',s_t,'reward: ',r_t)
         except:
             pass

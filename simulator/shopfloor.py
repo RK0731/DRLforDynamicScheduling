@@ -19,10 +19,6 @@ class Shopfloor:
             logging.Formatter('%(asctime)s [%(module)s: %(lineno)-3d] %(levelname)-5s >>> %(message)s'))
         self.sim_logger.addHandler(filehandler)
         # then create all assets on shop floor
-        self.initialize_assets()
-
-
-    def initialize_assets(self):
         self.env = simpy.Environment()
 
     
