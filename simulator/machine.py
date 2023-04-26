@@ -52,6 +52,9 @@ class Machine:
         self.routing_learning_event = self.env.event()
         self.env.process(self.production())
 
+    def initialization(self, **kwargs):
+        self.m_list = kwargs['machine_list']
+
 
     # The main function, simulates the production
     def production(self):
@@ -67,20 +70,20 @@ class Machine:
                 # the returned value is picked job's position in machine's queue
                 self.sqc_decision_pos = self.job_sequencing(self.queue)
                 self.picked_j_instance = self.queue[self.sqc_decision_pos]
-                self.logger.info("SQC: Machine %s choose job %s at time %s"%(self.m_idx,self.picked_j_instance,self.env.now))
+                self.logger.info("SQC: Machine %s choose job %s at time %s"%(self.m_idx, self.picked_j_instance.j_idx, self.env.now))
             # otherwise simply select the first(only) one
             else:
                 self.sqc_decision_pos = 0
                 self.picked_j_instance = self.queue[self.sqc_decision_pos]
-                self.logger.info("One queue: Machine %s process job %s at time %s"%(self.m_idx,self.picked_j_instance,self.env.now))
+                self.logger.info("One queue: Machine %s process job %s at time %s"%(self.m_idx, self.picked_j_instance.j_idx, self.env.now))
             # retrive the information of job
             pt = self.picked_j_instance.remaining_pt[0] # processing time of the picked job in this stage
             wait = self.env.now - self.picked_j_instance.arrival_t # time that job waited before being picked
-            self.record_production(pt, wait) # record these information
+            self.picked_j_instance.record_operation(self.m_idx, pt, wait) # record these information
             # The production process (yield the processing time of operation)
             yield self.env.timeout(pt)
-            self.cumulative_run_time += pt
-            #print("completion: Job %s leave machine %s at time %s"%(self.queue[self.sqc_decision_pos],self.m_idx,self.env.now))
+            #self.cumulative_run_time += pt
+            self.logger.info("OPN: Job {} leave Machine {} at time {}".format(self.picked_j_instance.j_idx, self.m_idx, self.env.now))
             # transfer job to next workcenter or delete it, and update information
             self.after_operation()
             # check if machine is shut down/broken
@@ -124,31 +127,26 @@ class Machine:
        to maintain some record, and transit the finished job to next workcenter or out of system
     '''
     # a new job (instance) arrives
-    def job_arrival(self, job_instance):
-        # add the job to queue
-        self.queue.append(job_instance)
-        # update necessary information for sequencing decision, before re-activate the machine
+    def job_arrival(self, arriving_job):
+        # add the job instance to queue
+        self.queue.append(arriving_job)
+        arriving_job.before_operation()
+        self.logger.info("ARV: Job {} arrived at Machine {}".format(arriving_job.j_idx, self.m_idx))
         # change the stocking status if machine is currently idle
         if not self.sufficient_stock.triggered:
             self.sufficient_stock.succeed()
 
-    
+
     # update information that will be used for calculating the rewards
     def before_operation(self):
-        # number of jobs that to be sequenced, and their ttd and slack
-        self.waiting_jobs = len(self.queue)
-        time_till_due = np.array(self.due_list) - self.env.now
-        self.before_op_ttd = time_till_due
-        self.before_op_ttd_chosen = self.before_op_ttd[self.sqc_decision_pos]
-        self.before_op_ttd_loser = np.delete(self.before_op_ttd, self.sqc_decision_pos)
-
-
-    def job_departure(self):
         pass
 
 
     def after_operation(self):
-        leaving_job = self.queue[self.sqc_decision_pos]
+        leaving_job = self.queue.pop(self.sqc_decision_pos)
+        next = leaving_job.after_operation()
+        if next > -1: # if returned index is valid
+            self.m_list[next].job_arrival(leaving_job)
 
 
     '''

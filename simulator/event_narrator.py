@@ -20,6 +20,7 @@ class Narrator:
         self.logger = logger
         self.recorder = recorder
         self.span = kwargs['span']
+        self.logger.info("Event narrator created")
         # look for random seed
         if 'seed' in kwargs:
             np.random.seed(kwargs['seed'])
@@ -49,7 +50,7 @@ class Narrator:
         # the interval between job arrivals by exponential distribution
         self.arrival_interval = np.random.exponential(self.beta, self.total_no).round()
         # process the job arrival function
-        self.env.process(self.job_arrival())
+        self.env.process(self.job_creation())
         '''
         2. Optional part I: machine breakdown
         '''
@@ -75,10 +76,10 @@ class Narrator:
 
 
     # continuously creating new jobs
-    def job_arrival(self):
+    def job_creation(self):
         # jobs are assumed to go through all machines
         trajectory_seed = np.arange(self.m_no)
-        while self.env.now < self.span:
+        while self.j_idx < self.total_no:
             # draw the interval from pre-produced list
             time_interval = self.arrival_interval[self.j_idx]
             yield self.env.timeout(time_interval)
@@ -116,9 +117,6 @@ class Narrator:
         self.rep_memo[m_idx].append(complete_exp)
         self.reward_record[m_idx][0].append(self.env.now)
         self.reward_record[m_idx][1].append(r_t)
-
-
-
 
 
 class Recorder:
