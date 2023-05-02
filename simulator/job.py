@@ -37,7 +37,8 @@ class Job:
         # if job is not completed
         if len(self.remaining_m) > 1:
             self.remaining_pt.pop(0)
-            next = self.remaining_m.pop(0)
+            self.remaining_m.pop(0)
+            next = self.remaining_m[0] # next station's index
             return next
         else:
             self.completion()
@@ -56,4 +57,5 @@ class Job:
 
     def __del__(self):
         self.logger.debug("JOB {} instance deleted at time {}".format(self.j_idx, self.env.now))
-        print(self.operation_record)
+        # append the operation histroy to the recorder
+        self.recorder.j_op_dict[self.j_idx] = self.operation_record

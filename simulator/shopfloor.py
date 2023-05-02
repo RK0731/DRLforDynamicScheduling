@@ -11,16 +11,18 @@ import argparse
 from job import *
 from machine import *
 from event_narrator import *
+from gantt_chart import *
 
 class Shopfloor:
     def __init__(self, **kwargs):
         ''' STEP 1. important features shared by all machine and job instances'''
         self.env = simpy.Environment()
+        self.kwargs = kwargs
         with open(Path(__file__).parent / "config" / "logging_config.json") as f:
             log_config = json.load(f)
             logging.config.dictConfig(log_config)
             self.sim_logger = logging.getLogger("sim_logger")
-        self.recorder = Recorder()
+        self.recorder = Recorder(**kwargs)
         ''' STEP 2. create machines and event narrator'''
         # machines
         self.m_list = []
@@ -36,12 +38,15 @@ class Shopfloor:
 
     def run_simulation(self):
         self.env.run()
-        # if the simulation completed without error, paste the log file to storage
-        ct = ''.join([str(x) for x in time.strftime("%Y,%m,%d,%H,%M,%S").split(',')])
-        shutil.copy(Path.cwd()/"log"/"sim.log", Path.cwd()/"log"/"past"/"{}_sim.log".format(ct))
-
+        # if the simulation completed without error and formal mode is activated, copy paste the log file to storage
+        if "formal" in self.kwargs and self.kwargs['formal']:
+            ct = ''.join([str(x) for x in time.strftime("%Y,%m,%d,%H,%M,%S").split(',')])
+            shutil.copy(Path.cwd()/"log"/"sim.log", Path.cwd()/"log"/"past"/"{}_sim.log".format(ct))
+        if "draw_gantt" in self.kwargs and self.kwargs['draw_gantt']>0:
+            painter = Draw(self.recorder, **self.kwargs)
 
 if __name__ == '__main__':
     spf = Shopfloor(m_no=4, span=100, pt_range=[1,10], pt_variance=0, due_tightness=2, E_utliz=0.8,
-                    machine_breakdown=False, processing_time_variability=False)
+                    machine_breakdown=False, processing_time_variability=False,
+                    draw_gantt=10)
     spf.run_simulation()

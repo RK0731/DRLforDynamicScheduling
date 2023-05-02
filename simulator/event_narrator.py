@@ -119,11 +119,15 @@ class Narrator:
         self.reward_record[m_idx][1].append(r_t)
 
 
+# Retains all records
 class Recorder:
-    def __init__(self):
+    def __init__(self, **kwargs):
+        self.m_no = kwargs['m_no']
+        self.span = kwargs['span']
         # record the job's journey
         self.j_arrival_dict = {}
         self.j_departure_dict = {}
+        self.j_op_dict = {}
         self.pt_mean_dict = {}
         self.pt_std_dict = {}
         self.expected_tardiness_dict = {}

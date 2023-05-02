@@ -70,21 +70,21 @@ class Machine:
                 # the returned value is picked job's position in machine's queue
                 self.sqc_decision_pos = self.job_sequencing(self.queue)
                 self.picked_j_instance = self.queue[self.sqc_decision_pos]
-                self.logger.info("SQC: Machine %s choose job %s at time %s"%(self.m_idx, self.picked_j_instance.j_idx, self.env.now))
+                self.logger.info("SQC on: Machine %s picks job %s at time %s"%(self.m_idx, self.picked_j_instance.j_idx, self.env.now))
             # otherwise simply select the first(only) one
             else:
                 self.sqc_decision_pos = 0
                 self.picked_j_instance = self.queue[self.sqc_decision_pos]
-                self.logger.info("One queue: Machine %s process job %s at time %s"%(self.m_idx, self.picked_j_instance.j_idx, self.env.now))
+                self.logger.info("SQC off: Machine %s processes job %s at time %s"%(self.m_idx, self.picked_j_instance.j_idx, self.env.now))
             # retrive the information of job
             pt = self.picked_j_instance.remaining_pt[0] # processing time of the picked job in this stage
             wait = self.env.now - self.picked_j_instance.arrival_t # time that job waited before being picked
-            self.picked_j_instance.record_operation(self.m_idx, pt, wait) # record these information
+            self.picked_j_instance.record_operation(self.m_idx, self.env.now, pt, wait) # record these information
             # The production process (yield the processing time of operation)
             yield self.env.timeout(pt)
             #self.cumulative_run_time += pt
             self.logger.info("OPN: Job {} leave Machine {} at time {}".format(self.picked_j_instance.j_idx, self.m_idx, self.env.now))
-            # transfer job to next workcenter or delete it, and update information
+            # transfer job to next station or remove it from system
             self.after_operation()
             # check if machine is shut down/broken
             if not self.working_event.triggered:
@@ -99,7 +99,7 @@ class Machine:
 
     # when there's no job queueing, machine becomes idle
     def idle(self):
-        self.logger.info("IDL on: Machine {} becomes idle at time {}".format(self.m_idx, self.env.now))
+        self.logger.info("IDL on: Machine {} became idle at time {}".format(self.m_idx, self.env.now))
         # set the self.sufficient_stock event to untriggered
         self.sufficient_stock = self.env.event()
         # proceed only if the sufficient_stock event is triggered by new job arrival
