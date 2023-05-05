@@ -5,6 +5,8 @@ from pathlib import Path
 
 class Draw:
     def __init__(self, recorder, **kwargs):
+        if kwargs['span']>=250:
+            return
         # if duration is ok, draw the figure
         fig = plt.figure(figsize=(15, recorder.m_no+1))
         col_list = ['tab:blue', 'tab:orange', 'tab:green', 'tab:red', 'tab:purple', 'tab:brown', 'tab:pink', 'tab:gray', 'tab:olive', 'tab:cyan']

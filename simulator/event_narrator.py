@@ -33,8 +33,8 @@ class Narrator:
         self.m_list = kwargs['machine_list'] # get the list of all machines
         self.m_no = len(self.m_list) # related to the number of operations
         self.pt_range = kwargs['pt_range'] # lower and upper bound of processing time
-        self.pt_variance = kwargs['pt_variance'] # variance for normal distribution
         self.exp_pt = np.average(self.pt_range) # expected processing time of individual operations
+        self.pt_variance = kwargs['pt_variance'] # variance for normal distribution
         # variables to track the job related system status
         self.in_system_job_no = 0
         self.j_idx = 0
@@ -45,6 +45,8 @@ class Narrator:
         # The mean of an exp random variable X with rate parameter λ is given by:
         # 1/λ (which equals the term "beta" in np exp function)
         self.beta = self.exp_pt / self.E_utliz # beta is the average time interval between job arrivals
+        self.logger.info("The expected utilization rate (excluding machine down time) is: {}%".format(self.E_utliz*100))
+        self.logger.info("Converted expected interval between job arrival is: {} (m_no: {}, pt_range: {}, exp_pt: {})".format(self.beta, self.m_no, self.pt_range, self.exp_pt))
         # number of new jobs arrive within simulation, with 10% extra jobs as buffer
         self.total_no = np.round(1.1*self.span/self.beta).astype(int)
         # the interval between job arrivals by exponential distribution
@@ -90,7 +92,7 @@ class Narrator:
             # produce the trajectory of job, by shuffling the sequence seed
             np.random.shuffle(trajectory_seed)
             # randomly a produce processing time array of job, this is THEORATICAL value, not actual value if variance exists
-            ptl = np.random.randint(*self.pt_range, size = [self.m_no])
+            ptl = np.random.randint(self.pt_range[0], self.pt_range[1]+1, size = [self.m_no])
             # new job instance
             job_instance = Job(
                 self.env, self.logger, self.recorder,
@@ -147,6 +149,7 @@ class Recorder:
         self.j_departure_dict = {}
         self.j_op_dict = {}
         self.m_bkd_dict = {idx: [] for idx in range(kwargs['m_no'])}
+        self.m_cum_runtime_dict = {}
         self.pt_mean_dict = {}
         self.pt_std_dict = {}
         self.expected_tardiness_dict = {}

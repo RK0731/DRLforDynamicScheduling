@@ -37,7 +37,7 @@ class Shopfloor:
 
 
     def run_simulation(self):
-        self.env.run()
+        self.env.run(until=self.kwargs['span']*2)
         # if the simulation completed without error and formal mode is activated, copy paste the log file to storage
         if "formal" in self.kwargs and self.kwargs['formal']:
             ct = ''.join([str(x) for x in time.strftime("%Y,%m,%d,%H,%M,%S").split(',')])
@@ -47,7 +47,7 @@ class Shopfloor:
 
 
 if __name__ == '__main__':
-    spf = Shopfloor(m_no=5, span=100, pt_range=[1,10], pt_variance=0, due_tightness=2, E_utliz=0.3,
+    spf = Shopfloor(m_no=5, span=150, pt_range=[1,10], pt_variance=0, due_tightness=2, E_utliz=0.8,
                     machine_breakdown=True, MTBF=100, MTTR=10,
                     processing_time_variability=False,
                     draw_gantt=5, save=True)

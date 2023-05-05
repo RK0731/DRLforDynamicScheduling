@@ -30,6 +30,7 @@ class Machine:
         # working condition in shut down or breakdown
         self.working_event = self.env.event()
         self.restoration_time = 0
+        self.cumulative_runtime = 0
         # no shutdown, no breakdown at beginning
         self.working_event.succeed()
         # initialize the data for learning and recordiing
@@ -82,7 +83,6 @@ class Machine:
             self.after_decision(pt, wait)
             # The production process (yield the processing time of operation)
             yield self.env.timeout(pt)
-            #self.cumulative_run_time += pt
             self.logger.info("{} >>> OPN: Job {} departs from Machine {}".format(self.env.now, self.picked_j_instance.j_idx, self.m_idx))
             # transfer job to next station or remove it from system
             self.after_operation()
@@ -143,6 +143,7 @@ class Machine:
     def after_decision(self, pt, wait):
         self.picked_j_instance.record_operation(self.m_idx, self.env.now, pt, wait)
         self.release_time = self.env.now + pt
+        self.cumulative_runtime += pt
 
 
     def after_operation(self):
@@ -150,6 +151,12 @@ class Machine:
         next = leaving_job.after_operation()
         if next > -1: # if returned index is valid
             self.m_list[next].job_arrival(leaving_job)
+
+
+    def __del__(self):
+        self.logger.debug("{} >>> MACHINE {} instance deleted".format(self.env.now, self.m_idx))
+        # append the operation histroy to the recorder
+        self.recorder.m_cum_runtime_dict[self.m_idx] = self.cumulative_runtime
 
 
     '''
@@ -175,24 +182,6 @@ class Machine:
         self.event_creator.exp_tard_list[self.m_idx] = exp
         self.event_creator.exp_tard_rate = 1 - np.concatenate(self.event_creator.exp_tard_list).mean()
         self.event_creator.available_time_list[self.m_idx] = self.available_time
-
-
-    # give out the information related to routing decision
-    def routing_data_generation(self):
-        # note that we subtract current time from available_time
-        # becasue state_update_all function may be called at a different time
-        self.routing_data = [self.cumulative_pt, max(0,self.available_time-self.env.now), self.que_size, self.cumulative_run_time]
-        return self.routing_data
-
-
-    # give ou the information related to sequencing decision
-    def sequencing_data_generation(self):
-        self.sequencing_data = \
-        [self.current_pt, self.remaining_job_pt, np.array(self.due_list), self.env.now, self.completion_rate, \
-        self.time_till_due, self.slack, self.winq, self.avlm, self.next_pt, self.remaining_no_op, self.waited_time, \
-        self.wc_idx, self.queue, self.m_idx]
-        #print(self.sequencing_data)
-        return self.sequencing_data
 
 
     '''
