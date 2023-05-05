@@ -1,0 +1,32 @@
+{
+    "version": 1,
+    "disable_existing_loggers": true,
+    "formatters": {
+      "precise": {
+        "format": "%(asctime)s [%(module)s: %(lineno)-3d] %(levelname)-5s >>> %(message)s",
+        "datefmt": "%H:%M:%S"
+      },
+      "brief": {
+        "format": "%(levelname)-7s %(message)s",
+        "datefmt": "%Y-%m-%d %H:%M:%S"
+      }    
+    },
+    "handlers": {
+      "console": {
+        "class": "logging.StreamHandler",    
+        "formatter": "precise"
+      },
+      "root_file": {
+        "class": "logging.FileHandler",
+        "filename": "./log/sim.log",
+        "mode": "w",
+        "formatter": "brief"
+      }
+    },
+    "loggers": {
+      "sim_logger": {
+        "level": "DEBUG",
+        "handlers": ["console", "root_file"]
+      }
+    }
+}

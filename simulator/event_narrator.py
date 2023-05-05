@@ -28,7 +28,7 @@ class Narrator:
         else:
             self.logger.warning("Random seed is not specified, do this only for training!")
         '''
-        1. Essential part: machines and dynamic job arrivals
+        1. Compulsory part: machines and dynamic job arrivals
         '''
         self.m_list = kwargs['machine_list'] # get the list of all machines
         self.m_no = len(self.m_list) # related to the number of operations
@@ -55,7 +55,11 @@ class Narrator:
         2. Optional part I: machine breakdown
         '''
         if kwargs['machine_breakdown'] == True:
-            self.env.process(self.machine_breakdown())
+            self.MTBF = kwargs['MTBF']
+            self.MTTR = kwargs['MTTR']
+            for m_idx, m in enumerate(self.m_list):
+                self.env.process(self.machine_breakdown(m_idx))
+            self.logger.debug("Machine breakdown mode is ON, MTBF: {}, MTTR: {}".format(self.MTBF, self.MTTR))
         '''
         3. Optional part II: processing time variablity
         '''
@@ -99,8 +103,22 @@ class Narrator:
             self.j_idx += 1
 
 
-    def machine_breakdown(self):
-        pass
+    # periodicall disable machines
+    def machine_breakdown(self, m_idx):
+        while self.env.now < self.span:
+            # draw the time interval between two break downs
+            time_interval = np.around(np.random.exponential(self.MTBF), decimals = 1)
+            yield self.env.timeout(time_interval)
+            # draw the breakdown time
+            bkd_t = np.around(np.random.uniform(self.MTTR*0.5, self.MTTR*1.5), decimals = 1)
+            self.m_list[m_idx].working_event = self.env.event()
+            self.logger.debug("{} >>> BKD created, mahcine {} will be down for {}".format(self.env.now, m_idx, bkd_t))
+            # if machine is currently running, the breakdown will commence after current operation
+            actual_begin = max(self.m_list[m_idx].release_time, self.env.now)
+            actual_end = actual_begin + bkd_t
+            yield self.env.timeout(actual_end - self.env.now)
+            self.recorder.m_bkd_dict[m_idx].append([actual_begin, actual_end])
+            self.m_list[m_idx].working_event.succeed()
 
 
     def build_sqc_experience_repository(self,m_list): # build two dictionaries
@@ -128,6 +146,7 @@ class Recorder:
         self.j_arrival_dict = {}
         self.j_departure_dict = {}
         self.j_op_dict = {}
+        self.m_bkd_dict = {idx: [] for idx in range(kwargs['m_no'])}
         self.pt_mean_dict = {}
         self.pt_std_dict = {}
         self.expected_tardiness_dict = {}

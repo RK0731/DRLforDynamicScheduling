@@ -38,14 +38,14 @@ class Machine:
         if 'sqc_rule' in kwargs:
             try:
                 self.job_sequencing = eval(kwargs['sqc_rule'])
-                self.logger.info("Machine {} uses {} sequencing rule".format(self.m_idx, kwargs['sqc_rule']))
+                self.logger.info("* Machine {} uses {} sequencing rule".format(self.m_idx, kwargs['sqc_rule']))
             except Exception as e:
                 self.logger.error("Sequencing rule assigned to machine {} is invalid! Invalid entry: {}".format(self.m_idx, kwargs['sqc_rule']))
                 self.logger.error(str(e))
                 raise Exception
         else:
             # default sequencing rule is FIFO
-            self.logger.info("Machine {} uses default FIFO rule".format(self.m_idx))
+            self.logger.info("* Machine {} uses default FIFO rule".format(self.m_idx))
             self.job_sequencing = FIFO
         # record extra data for learning, initially not activated, can be activated by brains
         self.sequencing_learning_event = self.env.event()
@@ -70,20 +70,20 @@ class Machine:
                 # the returned value is picked job's position in machine's queue
                 self.sqc_decision_pos = self.job_sequencing(self.queue)
                 self.picked_j_instance = self.queue[self.sqc_decision_pos]
-                self.logger.info("SQC on: Machine %s picks job %s at time %s"%(self.m_idx, self.picked_j_instance.j_idx, self.env.now))
+                self.logger.info("{} >>> SQC on: Machine {} picks job {}".format(self.env.now, self.m_idx, self.picked_j_instance.j_idx))
             # otherwise simply select the first(only) one
             else:
                 self.sqc_decision_pos = 0
                 self.picked_j_instance = self.queue[self.sqc_decision_pos]
-                self.logger.info("SQC off: Machine %s processes job %s at time %s"%(self.m_idx, self.picked_j_instance.j_idx, self.env.now))
+                self.logger.info("{} >>> SQC off: Machine {} processes job {}".format(self.env.now, self.m_idx, self.picked_j_instance.j_idx))
             # retrive the information of job
             pt = self.picked_j_instance.remaining_pt[0] # processing time of the picked job in this stage
             wait = self.env.now - self.picked_j_instance.arrival_t # time that job waited before being picked
-            self.picked_j_instance.record_operation(self.m_idx, self.env.now, pt, wait) # record these information
+            self.after_decision(pt, wait)
             # The production process (yield the processing time of operation)
             yield self.env.timeout(pt)
             #self.cumulative_run_time += pt
-            self.logger.info("OPN: Job {} leave Machine {} at time {}".format(self.picked_j_instance.j_idx, self.m_idx, self.env.now))
+            self.logger.info("{} >>> OPN: Job {} departs from Machine {}".format(self.env.now, self.picked_j_instance.j_idx, self.m_idx))
             # transfer job to next station or remove it from system
             self.after_operation()
             # check if machine is shut down/broken
@@ -99,7 +99,7 @@ class Machine:
 
     # when there's no job queueing, machine becomes idle
     def idle(self):
-        self.logger.info("IDL on: Machine {} became idle at time {}".format(self.m_idx, self.env.now))
+        self.logger.info("{} >>> IDL on: Machine {} became idle".format(self.env.now, self.m_idx))
         # set the self.sufficient_stock event to untriggered
         self.sufficient_stock = self.env.event()
         # proceed only if the sufficient_stock event is triggered by new job arrival
@@ -107,19 +107,17 @@ class Machine:
         # examine whether the scheduled shutdown is triggered
         if not self.working_event.triggered:
             yield self.env.process(self.breakdown())
-        self.logger.info("IDL off: Machine {} replenished at time {}".format(self.m_idx, self.env.now))
+        self.logger.info("{} >>> IDL off: Machine {} replenished".format(self.env.now, self.m_idx))
 
 
     # or when machine failure happens
     def breakdown(self):
-        self.logger.info("BKD on: Machine {} broke at time {}".format(self.m_idx, self.env.now))
+        self.logger.info("{} >>> BKD on: Machine {} is broken".format(self.env.now, self.m_idx))
         start = self.env.now
-        # simply update the available time of that machines
-        self.available_time = self.restoration_time + self.cumulative_pt
         # suspend the production here, untill the working_event is triggered
         yield self.working_event
-        self.breakdown_record.append([(start, self.env.now - start), self.m_idx])
-        self.logger.info("BKD off: Machine {} restored at time {}, down for {} units".format(self.m_idx, self.env.now, self.env.now - start))
+        self.breakdown_record.append([(self.m_idx, start, self.env.now - start)])
+        self.logger.info("{} >>> BKD off: Machine {} restored, delayed the production for {} units".format(self.env.now, self.m_idx, self.env.now - start))
 
 
     '''
@@ -131,7 +129,7 @@ class Machine:
         # add the job instance to queue
         self.queue.append(arriving_job)
         arriving_job.before_operation()
-        self.logger.info("ARV: Job {} arrived at Machine {}".format(arriving_job.j_idx, self.m_idx))
+        self.logger.info("{} >>> ARV: Job {} arrived at Machine {}".format(self.env.now, arriving_job.j_idx, self.m_idx))
         # change the stocking status if machine is currently idle
         if not self.sufficient_stock.triggered:
             self.sufficient_stock.succeed()
@@ -140,6 +138,11 @@ class Machine:
     # update information that will be used for calculating the rewards
     def before_operation(self):
         pass
+
+
+    def after_decision(self, pt, wait):
+        self.picked_j_instance.record_operation(self.m_idx, self.env.now, pt, wait)
+        self.release_time = self.env.now + pt
 
 
     def after_operation(self):
@@ -158,15 +161,6 @@ class Machine:
     def state_update_all(self):
         pass
 
-    # available time is a bit tricky, jobs may come when the operation is ongoing
-    # or when the machine is already in idle (availble time is earlier than now)
-    # hence we can't simply let available time = now + cumulative_pt
-    def state_update_after_job_arrival(self, increased_available_time):
-        self.current_pt = np.array([x[self.m_idx] for x in self.pt_list])
-        self.cumulative_pt = self.current_pt.sum()
-        # add the new job's pt to current time / current available time
-        self.available_time = max(self.available_time, self.env.now) + increased_available_time
-        self.que_size = len(self.queue)
 
     # update the information of progression, eralized and expected tardiness to event_creator !!!
     def update_global_info_progression(self):
@@ -182,22 +176,6 @@ class Machine:
         self.event_creator.exp_tard_rate = 1 - np.concatenate(self.event_creator.exp_tard_list).mean()
         self.event_creator.available_time_list[self.m_idx] = self.available_time
 
-    # update the information of the job that being processed to event_creator !!!
-    def update_global_info_anticipation(self,pt):
-        current_j_idx = self.queue[self.sqc_decision_pos]
-        self.event_creator.current_j_idx_list[self.m_idx] = current_j_idx
-        next_wc = self.sequence_list[self.sqc_decision_pos][0] if len(self.sequence_list[self.sqc_decision_pos]) else -1 # next workcenter of the job
-        self.event_creator.next_wc_list[self.m_idx] = next_wc # update the next wc info (hold by job creator)
-        self.release_time = self.env.now + pt
-        self.event_creator.release_time_list[self.m_idx] = self.release_time # update the time of completion of current operation
-        job_rempt = self.remaining_job_pt[self.sqc_decision_pos].sum() - pt
-        self.event_creator.arriving_job_rempt_list[self.m_idx] = job_rempt # update the remaining pt of job under processing
-        job_slack = self.slack[self.sqc_decision_pos]
-        self.event_creator.arriving_job_slack_list[self.m_idx] = job_slack # update the slack time of processing job (hold by job creator)
-
-    # must call this after operation otherwise the record persists, lead to error
-    def update_global_info_after_operation(self):
-        self.event_creator.next_wc_list[self.m_idx] = -1 # after each operation, clear the record in job creator
 
     # give out the information related to routing decision
     def routing_data_generation(self):
@@ -205,6 +183,7 @@ class Machine:
         # becasue state_update_all function may be called at a different time
         self.routing_data = [self.cumulative_pt, max(0,self.available_time-self.env.now), self.que_size, self.cumulative_run_time]
         return self.routing_data
+
 
     # give ou the information related to sequencing decision
     def sequencing_data_generation(self):

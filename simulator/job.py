@@ -25,7 +25,7 @@ class Job:
             self.transfer_t = kwargs['transfer_time']
         # data recording
         self.operation_record = []
-        self.logger.info("JOB {} created at time: {}, trajectory: {}, exp.pt: {}, due: {}".format(self.j_idx, self.env.now, self.trajectory , self.remaining_pt, self.due))
+        self.logger.info("{} >>> JOB {} created, trajectory: {}, exp.pt: {}, due: {}".format(self.env.now, self.j_idx, self.trajectory , self.remaining_pt, self.due))
 
 
     def before_operation(self):
@@ -51,11 +51,11 @@ class Job:
 
     # all operations are complete and exit the system
     def completion(self):
-        self.logger.info("JOB {} completed at time {}".format(self.j_idx, self.env.now))
+        self.logger.info("{} >>> JOB {} completed".format(self.env.now, self.j_idx))
         self.tardiness = self.env.now - self.due
 
 
     def __del__(self):
-        self.logger.debug("JOB {} instance deleted at time {}".format(self.j_idx, self.env.now))
+        self.logger.debug("{} >>> JOB {} instance deleted".format(self.env.now, self.j_idx))
         # append the operation histroy to the recorder
         self.recorder.j_op_dict[self.j_idx] = self.operation_record

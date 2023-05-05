@@ -45,8 +45,10 @@ class Shopfloor:
         if "draw_gantt" in self.kwargs and self.kwargs['draw_gantt']>0:
             painter = Draw(self.recorder, **self.kwargs)
 
+
 if __name__ == '__main__':
-    spf = Shopfloor(m_no=4, span=100, pt_range=[1,10], pt_variance=0, due_tightness=2, E_utliz=0.8,
-                    machine_breakdown=False, processing_time_variability=False,
-                    draw_gantt=10)
+    spf = Shopfloor(m_no=5, span=100, pt_range=[1,10], pt_variance=0, due_tightness=2, E_utliz=0.3,
+                    machine_breakdown=True, MTBF=100, MTTR=10,
+                    processing_time_variability=False,
+                    draw_gantt=5, save=True)
     spf.run_simulation()
