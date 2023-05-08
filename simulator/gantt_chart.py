@@ -26,7 +26,7 @@ class Draw:
                     [(begin, pt)], (m_idx-0.25, 0.5), color=col, edgecolor='k'
                     )
                 gantt_chart.text(
-                    begin, m_idx, j_idx, fontsize=10, ha='left', va='center', color='w'
+                    begin, m_idx+(j_idx%3)*0.13-0.25, j_idx, fontsize=10, ha='left', va='bottom', color='k'
                     )
                 last_output = begin + pt
     
@@ -69,5 +69,5 @@ class Draw:
             plt.show(block=False)
             plt.pause(kwargs['draw_gantt'])
             plt.close(fig)
-        if 'save' in kwargs and kwargs['save']:
+        if 'save_gantt' in kwargs and kwargs['save_gantt']:
             fig.savefig(Path() / 'log' / 'gantt_chart.png', dpi=600, bbox_inches='tight')

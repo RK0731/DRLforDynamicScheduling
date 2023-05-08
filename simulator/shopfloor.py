@@ -26,7 +26,7 @@ class Shopfloor:
         ''' STEP 2. create machines and event narrator'''
         # machines
         self.m_list = []
-        self.sim_logger.debug("Creating {} machines in shopfloor ".format(kwargs['m_no']))
+        self.sim_logger.debug("Creating {} machines on shopfloor ".format(kwargs['m_no']))
         for i in range(kwargs['m_no']):
             self.m_list.append(Machine(self.env, self.sim_logger, self.recorder, m_idx=i, **kwargs))
         for m in self.m_list:
@@ -47,8 +47,8 @@ class Shopfloor:
 
 
 if __name__ == '__main__':
-    spf = Shopfloor(m_no=5, span=150, pt_range=[1,10], pt_variance=0, due_tightness=2, E_utliz=0.8,
-                    machine_breakdown=True, MTBF=100, MTTR=10,
-                    processing_time_variability=False,
-                    draw_gantt=5, save=True)
+    spf = Shopfloor(m_no=5, span=100, pt_range=[1,10], due_tightness=2, E_utliz=0.6,
+                    machine_breakdown=True, MTBF=100, MTTR=10, random_bkd=True,
+                    processing_time_variability=True, pt_cv=0.1, 
+                    draw_gantt=5, save_gantt=True)
     spf.run_simulation()

@@ -71,19 +71,24 @@ class Machine:
                 # the returned value is picked job's position in machine's queue
                 self.sqc_decision_pos = self.job_sequencing(self.queue)
                 self.picked_j_instance = self.queue[self.sqc_decision_pos]
-                self.logger.info("{} >>> SQC on: Machine {} picks job {}".format(self.env.now, self.m_idx, self.picked_j_instance.j_idx))
+                self.logger.info("{} >>> SQC on: Machine {} picks Job {}".format(
+                    self.env.now, self.m_idx, self.picked_j_instance.j_idx))
             # otherwise simply select the first(only) one
             else:
                 self.sqc_decision_pos = 0
                 self.picked_j_instance = self.queue[self.sqc_decision_pos]
-                self.logger.info("{} >>> SQC off: Machine {} processes job {}".format(self.env.now, self.m_idx, self.picked_j_instance.j_idx))
+                self.logger.info("{} >>> SQC off: Machine {} processes Job {}".format(
+                    self.env.now, self.m_idx, self.picked_j_instance.j_idx))
             # retrive the information of job
-            pt = self.picked_j_instance.remaining_pt[0] # processing time of the picked job in this stage
+            pt = self.picked_j_instance.actual_remaining_pt[0] # the actual processing time in this stage, can be different from expected value
             wait = self.env.now - self.picked_j_instance.arrival_t # time that job waited before being picked
             self.after_decision(pt, wait)
+            self.logger.debug("{} >>> PT: Job {} on Machine {} proc.t, expected: {}, actual: {}".format(
+                self.env.now, self.picked_j_instance.j_idx, self.m_idx, self.picked_j_instance.remaining_pt[0], pt))
             # The production process (yield the processing time of operation)
             yield self.env.timeout(pt)
-            self.logger.info("{} >>> OPN: Job {} departs from Machine {}".format(self.env.now, self.picked_j_instance.j_idx, self.m_idx))
+            self.logger.info("{} >>> DEP: Job {} departs from Machine {}".format(
+                self.env.now, self.picked_j_instance.j_idx, self.m_idx))
             # transfer job to next station or remove it from system
             self.after_operation()
             # check if machine is shut down/broken

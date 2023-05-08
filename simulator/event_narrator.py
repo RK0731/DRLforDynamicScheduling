@@ -11,8 +11,7 @@ Able to simulate job arrival/cancellation, machine breakdown, processing time va
 '''
 
 class Narrator:
-    def __init__(self, env, logger, recorder, **kwargs
-            ):
+    def __init__(self, env, logger, recorder, **kwargs):
         '''
         0. Shared features
         '''
@@ -20,11 +19,12 @@ class Narrator:
         self.logger = logger
         self.recorder = recorder
         self.span = kwargs['span']
-        self.logger.info("Event narrator created")
+        self.kwargs = kwargs
+        self.logger.debug("Event narrator created")
         # look for random seed
         if 'seed' in kwargs:
             np.random.seed(kwargs['seed'])
-            self.logger.info("Random seed is specified, seed: {}".format(kwargs['seed']))
+            self.logger.debug("Random seed is specified, seed: {}".format(kwargs['seed']))
         else:
             self.logger.warning("Random seed is not specified, do this only for training!")
         '''
@@ -34,7 +34,6 @@ class Narrator:
         self.m_no = len(self.m_list) # related to the number of operations
         self.pt_range = kwargs['pt_range'] # lower and upper bound of processing time
         self.exp_pt = np.average(self.pt_range) # expected processing time of individual operations
-        self.pt_variance = kwargs['pt_variance'] # variance for normal distribution
         # variables to track the job related system status
         self.in_system_job_no = 0
         self.j_idx = 0
@@ -45,8 +44,8 @@ class Narrator:
         # The mean of an exp random variable X with rate parameter λ is given by:
         # 1/λ (which equals the term "beta" in np exp function)
         self.beta = self.exp_pt / self.E_utliz # beta is the average time interval between job arrivals
-        self.logger.info("The expected utilization rate (excluding machine down time) is: {}%".format(self.E_utliz*100))
-        self.logger.info("Converted expected interval between job arrival is: {} (m_no: {}, pt_range: {}, exp_pt: {})".format(self.beta, self.m_no, self.pt_range, self.exp_pt))
+        self.logger.debug("The expected utilization rate (excluding machine down time) is: {}%".format(self.E_utliz*100))
+        self.logger.debug("Converted expected interval between job arrival is: {} (m_no: {}, pt_range: {}, exp_pt: {})".format(self.beta, self.m_no, self.pt_range, self.exp_pt))
         # number of new jobs arrive within simulation, with 10% extra jobs as buffer
         self.total_no = np.round(1.1*self.span/self.beta).astype(int)
         # the interval between job arrivals by exponential distribution
@@ -60,15 +59,16 @@ class Narrator:
             self.MTBF = kwargs['MTBF']
             self.MTTR = kwargs['MTTR']
             for m_idx, m in enumerate(self.m_list):
-                self.env.process(self.machine_breakdown(m_idx))
+                self.env.process(self.machine_breakdown(m_idx, kwargs['random_bkd']))
             self.logger.debug("Machine breakdown mode is ON, MTBF: {}, MTTR: {}".format(self.MTBF, self.MTTR))
         '''
         3. Optional part II: processing time variablity
         '''
-        if kwargs['processing_time_variability'] == True:
-            self.pt_variance = kwargs['pt_variance']
+        if kwargs['processing_time_variability'] and kwargs['pt_cv'] > 0:
+            self.pt_cv = kwargs['pt_cv']
+            self.logger.debug("Variable processing time mode is ON, coefficient of variance: {}".format(kwargs['pt_cv']))
         else:
-            self.pt_variance = 0
+            self.pt_cv = 0
         # initialize the information associated with jobs that are being processed
         # note that the updates to these data are initiated by job or machine instances
         self.available_time_list = np.array([0 for m in self.m_list]) 
@@ -97,7 +97,7 @@ class Narrator:
             job_instance = Job(
                 self.env, self.logger, self.recorder,
                 job_index = self.j_idx, trajectory = trajectory_seed.copy(), processing_time_list = ptl.copy(),
-                pt_variance = self.pt_variance, tightness = self.tightness)
+                pt_range = self.pt_range, pt_cv = self.pt_cv, tightness = self.tightness)
             # after creating a job, assign it to the first machine along its trajectory
             first_m = trajectory_seed[0]
             self.m_list[first_m].job_arrival(job_instance)
@@ -106,13 +106,16 @@ class Narrator:
 
 
     # periodicall disable machines
-    def machine_breakdown(self, m_idx):
+    def machine_breakdown(self, m_idx, random_bkd):
         while self.env.now < self.span:
             # draw the time interval between two break downs
-            time_interval = np.around(np.random.exponential(self.MTBF), decimals = 1)
-            yield self.env.timeout(time_interval)
-            # draw the breakdown time
-            bkd_t = np.around(np.random.uniform(self.MTTR*0.5, self.MTTR*1.5), decimals = 1)
+            if random_bkd:
+                time_interval = np.around(np.random.exponential(self.MTBF), decimals = 1)
+                bkd_t = np.around(np.random.uniform(self.MTTR*0.5, self.MTTR*1.5), decimals = 1)
+            else:
+                time_interval = self.MTBF
+                bkd_t = self.MTTR
+            yield self.env.timeout(time_interval)           
             self.m_list[m_idx].working_event = self.env.event()
             self.logger.debug("{} >>> BKD created, mahcine {} will be down for {}".format(self.env.now, m_idx, bkd_t))
             # if machine is currently running, the breakdown will commence after current operation
