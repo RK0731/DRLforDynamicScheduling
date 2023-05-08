@@ -5,6 +5,7 @@ import time
 import json
 from pathlib import Path
 import shutil
+import tabulate
 import os
 import argparse
 
@@ -38,6 +39,7 @@ class Shopfloor:
 
     def run_simulation(self):
         self.env.run(until=self.kwargs['span']*2)
+        self.narrator.post_simulation()
         # if the simulation completed without error and formal mode is activated, copy paste the log file to storage
         if "formal" in self.kwargs and self.kwargs['formal']:
             ct = ''.join([str(x) for x in time.strftime("%Y,%m,%d,%H,%M,%S").split(',')])

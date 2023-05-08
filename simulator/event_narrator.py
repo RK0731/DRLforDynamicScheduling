@@ -125,6 +125,14 @@ class Narrator:
             self.recorder.m_bkd_dict[m_idx].append([actual_begin, actual_end])
             self.m_list[m_idx].working_event.succeed()
 
+    
+    def post_simulation(self):
+        self.logger.info('\n\nSimulation Ended, here is the configuration:\n{}\n'.format(
+            tabulate([["Category","Description"],
+                      ["Machine","(1) Number: {}; (2) Machine Breakdown: {}; (3) Random bkd: {}".format(self.m_no, self.kwargs['machine_breakdown'], self.kwargs['random_bkd'])],
+                      ["Job","(1) Number: {}, (2) pt range: {}; (3) pt cv: {}".format(self.j_idx, self.pt_range, self.pt_cv)]],
+                      headers="firstrow")))
+
 
     def build_sqc_experience_repository(self,m_list): # build two dictionaries
         self.incomplete_experience = {}
