@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 import simpy
 import pandas as pd
 import logging.config
@@ -16,7 +18,7 @@ from gantt_chart import *
 
 class Shopfloor:
     def __init__(self, **kwargs):
-        ''' STEP 1. important features shared by all machine and job instances'''
+        # STEP 1. important features shared by all machine and job instances
         self.env = simpy.Environment()
         self.kwargs = kwargs
         with open(Path(__file__).parent / "config" / "logging_config.json") as f:
@@ -24,15 +26,14 @@ class Shopfloor:
             logging.config.dictConfig(log_config)
             self.sim_logger = logging.getLogger("sim_logger")
         self.recorder = Recorder(**kwargs)
-        ''' STEP 2. create machines and event narrator'''
-        # machines
+        # STEP 2. create machines and event narrator
         self.m_list = []
+        self.sim_logger.info("Simulation run at: {}".format(time.strftime("%Y-%m-%d, %H:%M:%S")))
         self.sim_logger.debug("Creating {} machines on shopfloor ".format(kwargs['m_no']))
         for i in range(kwargs['m_no']):
             self.m_list.append(Machine(self.env, self.sim_logger, self.recorder, m_idx=i, **kwargs))
         for m in self.m_list:
             m.initialization(machine_list = self.m_list)
-        # dynamic events narrator
         self.sim_logger.debug("Initializing event narrator, machine breakdown: {}, processing time variability: {}".format(kwargs['machine_breakdown'], kwargs['processing_time_variability']))
         self.narrator = Narrator(self.env, self.sim_logger, self.recorder, machine_list=self.m_list, **kwargs)
 
@@ -49,8 +50,8 @@ class Shopfloor:
 
 
 if __name__ == '__main__':
-    spf = Shopfloor(m_no=5, span=100, pt_range=[1,10], due_tightness=2, E_utliz=0.6,
-                    machine_breakdown=True, MTBF=100, MTTR=10, random_bkd=True,
-                    processing_time_variability=True, pt_cv=0.1, 
+    spf = Shopfloor(m_no=5, span=100, pt_range=[1,10], due_tightness=2, E_utliz=0.8,
+                    sqc_rule='Slack', machine_breakdown=True, MTBF=100, MTTR=10, random_bkd=True,
+                    processing_time_variability=True, pt_cv=0.1,
                     draw_gantt=5, save_gantt=True)
     spf.run_simulation()

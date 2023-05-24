@@ -28,7 +28,7 @@ class Narrator:
         else:
             self.logger.warning("Random seed is not specified, do this only for training!")
         '''
-        1. Compulsory part: machines and dynamic job arrivals
+        1. Must-have part: machines and dynamic job arrivals
         '''
         self.m_list = kwargs['machine_list'] # get the list of all machines
         self.m_no = len(self.m_list) # related to the number of operations
@@ -127,10 +127,10 @@ class Narrator:
 
     
     def post_simulation(self):
-        self.logger.info('\n\nSimulation Ended, here is the configuration:\n{}\n'.format(
-            tabulate([["Category","Description"],
-                      ["Machine","(1) Number: {}; (2) Machine Breakdown: {}; (3) Random bkd: {}".format(self.m_no, self.kwargs['machine_breakdown'], self.kwargs['random_bkd'])],
-                      ["Job","(1) Number: {}, (2) pt range: {}; (3) pt cv: {}".format(self.j_idx, self.pt_range, self.pt_cv)]],
+        self.logger.info('Simulation Ended, here is the shopfloor configuration:\n\n{}\n'.format(
+            tabulate([["Category","Number", "Attributes"],
+                      ["Machine", self.m_no, "(1) Machine Breakdown: {}; (2) Random bkd: {}".format(self.kwargs['machine_breakdown'], self.kwargs['random_bkd'])],
+                      ["Job", self.j_idx, "(1) pt range: {}; (2) pt cv: {}".format(self.pt_range, self.pt_cv)]],
                       headers="firstrow")))
 
 

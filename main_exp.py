@@ -1,3 +1,7 @@
+#!/usr/bin/env python3
+
+# ROUTING BRAIN -> deep reinforcement learning-based routing agent
+
 import random
 import numpy as np
 import sys
@@ -7,12 +11,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
-
 from tabulate import tabulate
-
-'''
-ROUTING BRAIN -> deep reinforcement learning-based routing agent
-'''
 
 class routing_brain:
     def __init__(self, env, job_creator, m_list, wc_list, warm_up, span, *args, **kwargs):
