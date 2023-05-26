@@ -6,10 +6,9 @@ import numpy as np
 
 
 class Job:
-    def __init__(self, env, logger, recorder, *args, **kwargs):
-        self.env = env
-        self.logger = logger
-        self.recorder = recorder
+    def __init__(self, *args, **kwargs):
+        for k, v in kwargs.items():
+            setattr(self, k, v)
         # associated attributes
         self.creation_t = self.arrival_t = self.env.now
         self.j_idx = kwargs['job_index']

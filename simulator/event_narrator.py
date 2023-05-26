@@ -1,6 +1,7 @@
 import numpy as np
 import random
 import os
+from dataclasses import  dataclass, field
 from tabulate import tabulate
 import matplotlib.pyplot as plt
 from job import *
@@ -69,16 +70,6 @@ class Narrator:
             self.logger.debug("Variable processing time mode is ON, coefficient of variance: {}".format(kwargs['pt_cv']))
         else:
             self.pt_cv = 0
-        # initialize the information associated with jobs that are being processed
-        # note that the updates to these data are initiated by job or machine instances
-        self.available_time_list = np.array([0 for m in self.m_list]) 
-        self.release_time_list = np.array([self.exp_pt for m in self.m_list])
-        self.current_j_idx_list = np.arange(self.m_no)
-        self.next_machine_list = np.array([-1 for m in self.m_list])
-        self.next_pt_list = np.array([self.exp_pt for m in self.m_list])
-        self.arriving_job_ttd_list = np.array([self.exp_pt * self.m_no for m in self.m_list])
-        self.arriving_job_rempt_list = np.array([0 for m in self.m_list])
-        self.arriving_job_slack_list = np.array([0 for m in self.m_list])
 
 
     # continuously creating new jobs
@@ -95,7 +86,7 @@ class Narrator:
             ptl = np.random.randint(self.pt_range[0], self.pt_range[1]+1, size = [self.m_no])
             # new job instance
             job_instance = Job(
-                self.env, self.logger, self.recorder,
+                env = self.env, logger = self.logger, recorder = self.recorder,
                 job_index = self.j_idx, trajectory = trajectory_seed.copy(), processing_time_list = ptl.copy(),
                 pt_range = self.pt_range, pt_cv = self.pt_cv, tightness = self.tightness)
             # after creating a job, assign it to the first machine along its trajectory
@@ -150,11 +141,11 @@ class Narrator:
         self.reward_record[m_idx][1].append(r_t)
 
 
-# Retains all records
+# Retain all records
 class Recorder:
     def __init__(self, **kwargs):
-        self.m_no = kwargs['m_no']
-        self.span = kwargs['span']
+        for k, v in kwargs.items():
+            setattr(self, k, v)
         # record the job's journey
         self.j_arrival_dict = {}
         self.j_departure_dict = {}
@@ -164,3 +155,4 @@ class Recorder:
         self.pt_mean_dict = {}
         self.pt_std_dict = {}
         self.expected_tardiness_dict = {}
+

@@ -31,7 +31,7 @@ class Shopfloor:
         self.sim_logger.info("Simulation run at: {}".format(time.strftime("%Y-%m-%d, %H:%M:%S")))
         self.sim_logger.debug("Creating {} machines on shopfloor ".format(kwargs['m_no']))
         for i in range(kwargs['m_no']):
-            self.m_list.append(Machine(self.env, self.sim_logger, self.recorder, m_idx=i, **kwargs))
+            self.m_list.append(Machine(env = self.env, logger = self.sim_logger, recorder = self.recorder, m_idx=i, **kwargs))
         for m in self.m_list:
             m.initialization(machine_list = self.m_list)
         self.sim_logger.debug("Initializing event narrator, machine breakdown: {}, processing time variability: {}".format(kwargs['machine_breakdown'], kwargs['processing_time_variability']))

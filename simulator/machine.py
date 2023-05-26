@@ -14,11 +14,10 @@ from sequencing_rule import *
 
 
 class Machine:
-    def __init__(self, env, logger, recorder, *args, **kwargs):
+    def __init__(self, *args, **kwargs):
         # initialize the environment of simulation
-        self.env = env
-        self.logger = logger
-        self.recorder = recorder
+        for k, v in kwargs.items():
+            setattr(self, k, v)
         self.m_idx = kwargs['m_idx']
         # the time that agent make current and next decision
         self.decision_time = 0
