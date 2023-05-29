@@ -12,13 +12,15 @@ Able to simulate job arrival/cancellation, machine breakdown, processing time va
 '''
 
 class Narrator:
-    def __init__(self, env, logger, recorder, **kwargs):
+    def __init__(self, **kwargs):
         '''
         0. Shared features
         '''
-        self.env = env
-        self.logger = logger
-        self.recorder = recorder
+        for k, v in kwargs.items():
+            setattr(self, k, v)
+        self.env = kwargs['env']
+        self.logger = kwargs['logger']
+        self.recorder = kwargs['recorder']
         self.span = kwargs['span']
         self.kwargs = kwargs
         self.logger.debug("Event narrator created")
@@ -31,15 +33,11 @@ class Narrator:
         '''
         1. Must-have part: machines and dynamic job arrivals
         '''
-        self.m_list = kwargs['machine_list'] # get the list of all machines
         self.m_no = len(self.m_list) # related to the number of operations
-        self.pt_range = kwargs['pt_range'] # lower and upper bound of processing time
         self.exp_pt = np.average(self.pt_range) # expected processing time of individual operations
         # variables to track the job related system status
         self.in_system_job_no = 0
         self.j_idx = 0
-        self.tightness = kwargs['due_tightness'] # due date tightness
-        self.E_utliz = kwargs['E_utliz'] # expected utlization rate of machines
         # produce the feature of new job arrivals by Poison distribution
         # draw the time interval betwen job arrivals from an exponential distribution
         # The mean of an exp random variable X with rate parameter λ is given by:
@@ -52,15 +50,13 @@ class Narrator:
         # the interval between job arrivals by exponential distribution
         self.arrival_interval = np.random.exponential(self.beta, self.total_no).round()
         # process the job arrival function
-        self.env.process(self.job_creation())
+        self.env.process(self.process_job_creation())
         '''
         2. Optional part I: machine breakdown
         '''
-        if kwargs['machine_breakdown'] == True:
-            self.MTBF = kwargs['MTBF']
-            self.MTTR = kwargs['MTTR']
+        if self.machine_breakdown == True:
             for m_idx, m in enumerate(self.m_list):
-                self.env.process(self.machine_breakdown(m_idx, kwargs['random_bkd']))
+                self.env.process(self.process_machine_breakdown(m_idx, kwargs['random_bkd']))
             self.logger.debug("Machine breakdown mode is ON, MTBF: {}, MTTR: {}".format(self.MTBF, self.MTTR))
         '''
         3. Optional part II: processing time variablity
@@ -73,7 +69,7 @@ class Narrator:
 
 
     # continuously creating new jobs
-    def job_creation(self):
+    def process_job_creation(self):
         # jobs are assumed to go through all machines
         trajectory_seed = np.arange(self.m_no)
         while self.j_idx < self.total_no:
@@ -88,7 +84,7 @@ class Narrator:
             job_instance = Job(
                 env = self.env, logger = self.logger, recorder = self.recorder,
                 job_index = self.j_idx, trajectory = trajectory_seed.copy(), processing_time_list = ptl.copy(),
-                pt_range = self.pt_range, pt_cv = self.pt_cv, tightness = self.tightness)
+                pt_range = self.pt_range, pt_cv = self.pt_cv, due_tightness = self.due_tightness)
             # after creating a job, assign it to the first machine along its trajectory
             first_m = trajectory_seed[0]
             self.m_list[first_m].job_arrival(job_instance)
@@ -97,7 +93,7 @@ class Narrator:
 
 
     # periodicall disable machines
-    def machine_breakdown(self, m_idx, random_bkd):
+    def process_machine_breakdown(self, m_idx, random_bkd):
         while self.env.now < self.span:
             # draw the time interval between two break downs
             if random_bkd:

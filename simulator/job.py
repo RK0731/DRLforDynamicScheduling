@@ -1,5 +1,5 @@
 """
-This is the job object, carries the information of route, processing time, due date, etc.
+This is the job class, carries the information of trajectory, processing time, due date, etc.
 """
 
 import numpy as np
@@ -7,9 +7,10 @@ import numpy as np
 
 class Job:
     def __init__(self, *args, **kwargs):
+        # user specified attributes
         for k, v in kwargs.items():
             setattr(self, k, v)
-        # associated attributes
+        # new intrinsic attributes
         self.creation_t = self.arrival_t = self.env.now
         self.j_idx = kwargs['job_index']
         self.trajectory = kwargs['trajectory']
@@ -26,7 +27,7 @@ class Job:
         # a stack of machine indices
         self.remaining_m = list(self.trajectory)
         # produce due date for job, which is proportional to the total processing time
-        self.due = np.round(self.pt_by_m_idx.sum() * np.random.uniform(1.2, kwargs['tightness']) + self.env.now)        
+        self.due = np.round(self.pt_by_m_idx.sum() * np.random.uniform(1.2, kwargs['due_tightness']) + self.env.now)        
         # optional attributes
         if 'transfer_time' in kwargs:
             self.transfer_t = kwargs['transfer_time']

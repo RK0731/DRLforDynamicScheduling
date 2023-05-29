@@ -15,10 +15,9 @@ from sequencing_rule import *
 
 class Machine:
     def __init__(self, *args, **kwargs):
-        # initialize the environment of simulation
+        # user specified attributes
         for k, v in kwargs.items():
             setattr(self, k, v)
-        self.m_idx = kwargs['m_idx']
         # the time that agent make current and next decision
         self.decision_time = 0
         self.release_time = 0
@@ -51,6 +50,7 @@ class Machine:
         self.sequencing_learning_event = self.env.event()
         self.routing_learning_event = self.env.event()
         self.env.process(self.production())
+
 
     def initialization(self, **kwargs):
         self.m_list = kwargs['machine_list']
