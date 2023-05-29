@@ -5,6 +5,7 @@ from dataclasses import  dataclass, field
 from tabulate import tabulate
 import matplotlib.pyplot as plt
 from job import *
+from sequencing_rule import *
 
 '''
 The module that creates dynamic events 
@@ -18,10 +19,6 @@ class Narrator:
         '''
         for k, v in kwargs.items():
             setattr(self, k, v)
-        self.env = kwargs['env']
-        self.logger = kwargs['logger']
-        self.recorder = kwargs['recorder']
-        self.span = kwargs['span']
         self.kwargs = kwargs
         self.logger.debug("Event narrator created")
         # look for random seed
@@ -31,7 +28,7 @@ class Narrator:
         else:
             self.logger.warning("Random seed is not specified, do this only for training!")
         '''
-        1. Must-have part: machines and dynamic job arrivals
+        1.1 Must-have part: machines and dynamic job arrivals
         '''
         self.m_no = len(self.m_list) # related to the number of operations
         self.exp_pt = np.average(self.pt_range) # expected processing time of individual operations
@@ -51,6 +48,30 @@ class Narrator:
         self.arrival_interval = np.random.exponential(self.beta, self.total_no).round()
         # process the job arrival function
         self.env.process(self.process_job_creation())
+        ''' 1.2 Machine initialization; knowing each other and specify the sequencing rule'''
+        if 'sqc_rule' in kwargs:
+            # follow a complete schedule
+            if kwargs['sqc_rule'] == 'complete_schedule':
+                pass
+                #self.job_sequencing = complete_schedule.who_is_next()
+            # or using mathematical optimization to produce dynamic schedule
+            elif kwargs['sqc_rule'] == 'opt_schedule':
+                pass
+                #self.job_sequencing = opt_schedule.who_is_next()
+            # otherwise a valid sequencing rule must be specified
+            try:
+                job_sequencing = eval(kwargs['sqc_rule'])
+                self.logger.info("* Machine use {} sequencing rule".format(kwargs['sqc_rule']))
+            except Exception as e:
+                self.logger.error("Sequencing rule is invalid! Invalid entry: {}".format(kwargs['sqc_rule']))
+                self.logger.error(str(e))
+                raise Exception
+        else:
+            # default sequencing rule is FIFO
+            self.logger.info("* Machine {} uses default FIFO rule".format(self.m_idx))
+            job_sequencing = FIFO
+        for m in self.m_list:
+            m.initialization(machine_list = self.m_list, sqc_rule = job_sequencing)
         '''
         2. Optional part I: machine breakdown
         '''
@@ -152,3 +173,11 @@ class Recorder:
         self.pt_std_dict = {}
         self.expected_tardiness_dict = {}
 
+
+class complete_schedule:
+    m_idx : int
+    sqc: list[int]
+
+    @classmethod
+    def who_is_next(self, dummy_jobs):
+        return self.grand_schedule[0]

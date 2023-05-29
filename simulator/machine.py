@@ -10,7 +10,6 @@ import simpy
 import numpy as np
 import torch
 from tabulate import tabulate
-from sequencing_rule import *
 
 
 class Machine:
@@ -21,7 +20,6 @@ class Machine:
         # the time that agent make current and next decision
         self.decision_time = 0
         self.release_time = 0
-
         # Initialize the possible events during production
         self.queue = []
         self.sufficient_stock = self.env.event()
@@ -33,31 +31,21 @@ class Machine:
         self.working_event.succeed()
         # initialize the data for learning and recordiing
         self.breakdown_record = []
-        # set the sequencing rule
-        if 'sqc_rule' in kwargs:
-            try:
-                self.job_sequencing = eval(kwargs['sqc_rule'])
-                self.logger.info("* Machine {} uses {} sequencing rule".format(self.m_idx, kwargs['sqc_rule']))
-            except Exception as e:
-                self.logger.error("Sequencing rule assigned to machine {} is invalid! Invalid entry: {}".format(self.m_idx, kwargs['sqc_rule']))
-                self.logger.error(str(e))
-                raise Exception
-        else:
-            # default sequencing rule is FIFO
-            self.logger.info("* Machine {} uses default FIFO rule".format(self.m_idx))
-            self.job_sequencing = FIFO
+        # set the sequencing decision-maker
         # record extra data for learning, initially not activated, can be activated by brains
         self.sequencing_learning_event = self.env.event()
         self.routing_learning_event = self.env.event()
-        self.env.process(self.production())
+        self.env.process(self.process_production())
 
 
     def initialization(self, **kwargs):
+        # let all machines know each other so they can pass the jobs around
         self.m_list = kwargs['machine_list']
-
+        # specify the sequencing decision maker
+        self.job_sequencing = kwargs['sqc_rule']
 
     # The main function, simulates the production
-    def production(self):
+    def process_production(self):
         # at the begining of simulation, check the initial queue/stock level
         if len(self.queue) < 1:
             yield self.env.process(self.idle())

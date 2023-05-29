@@ -7,7 +7,7 @@ import numpy as np
 
 class Job:
     def __init__(self, *args, **kwargs):
-        # user specified attributes
+        # all inherited attributes
         for k, v in kwargs.items():
             setattr(self, k, v)
         # new intrinsic attributes
@@ -15,7 +15,7 @@ class Job:
         self.j_idx = kwargs['job_index']
         self.trajectory = kwargs['trajectory']
         self.pt_by_m_idx = kwargs['processing_time_list'] # processing time ordered by machine index #1, 2, ... N, but by operations
-        # dynamic stack to store incomplete operations' processing time, variance may apply
+        # a stack to store incomplete operations' processing time, variance may apply
         seed = self.pt_by_m_idx[self.trajectory]
         if kwargs['pt_cv'] == 0:
             self.remaining_pt = list(seed)

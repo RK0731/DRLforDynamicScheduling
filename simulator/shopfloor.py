@@ -26,19 +26,17 @@ class Shopfloor:
             logging.config.dictConfig(log_config)
             self.logger = logging.getLogger("sim_logger")
         self.recorder = Recorder(**kwargs)
-        # STEP 2. create machines and passing the compolete machine list to all instances
+        # STEP 2. create machines
         self.m_list = []
         self.logger.info("Simulation run at: {}".format(time.strftime("%Y-%m-%d, %H:%M:%S")))
         self.logger.debug("Creating {} machines on shopfloor ".format(kwargs['m_no']))
         for i in range(kwargs['m_no']):
             self.m_list.append(Machine(env = self.env, logger = self.logger, recorder = self.recorder, m_idx=i, **kwargs))
-        for m in self.m_list:
-            m.initialization(machine_list = self.m_list)
         # STEP 3: create the event narrator of dynamic events
         self.logger.debug("Initializing event narrator, machine breakdown: {}, processing time variability: {}".format(kwargs['machine_breakdown'], kwargs['processing_time_variability']))
         self.narrator = Narrator(env = self.env, logger = self.logger, recorder = self.recorder, m_list = self.m_list, **kwargs)
 
-
+    
     def run_simulation(self):
         self.env.run(until=self.kwargs['span']*2)
         self.narrator.post_simulation()
@@ -52,7 +50,7 @@ class Shopfloor:
 
 if __name__ == '__main__':
     spf = Shopfloor(m_no=5, span=100, pt_range=[1,10], due_tightness=2, E_utliz=0.8,
-                    sqc_rule='Slack', machine_breakdown=True, MTBF=100, MTTR=10, random_bkd=True,
+                    sqc_rule='CR', machine_breakdown=True, MTBF=100, MTTR=10, random_bkd=True,
                     processing_time_variability=True, pt_cv=0.1,
-                    draw_gantt=5, save_gantt=True)
+                    draw_gantt=5, save_gantt=True, seed = 10000)
     spf.run_simulation()
