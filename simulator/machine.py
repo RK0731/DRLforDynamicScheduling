@@ -112,10 +112,6 @@ class Machine:
         self.logger.info("{} >>> BKD off: Machine {} restored, delayed the production for {} units".format(self.env.now, self.m_idx, self.env.now - start))
 
 
-    '''
-    2. downwards are functions the called before and after each operation
-       to maintain some record, and transit the finished job to next workcenter or out of system
-    '''
     # a new job (instance) arrives
     def job_arrival(self, arriving_job):
         # add the job instance to queue

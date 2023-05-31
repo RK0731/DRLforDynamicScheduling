@@ -49,7 +49,7 @@ class Shopfloor:
 
 
 if __name__ == '__main__':
-    spf = Shopfloor(m_no=5, span=100, pt_range=[1,10], due_tightness=2, E_utliz=0.8,
+    spf = Shopfloor(m_no=5, span=50, pt_range=[1,10], due_tightness=2, E_utliz=0.8,
                     sqc_rule='CR', machine_breakdown=True, MTBF=100, MTTR=10, random_bkd=True,
                     processing_time_variability=True, pt_cv=0.1,
                     draw_gantt=5, save_gantt=True, seed = 10000)
