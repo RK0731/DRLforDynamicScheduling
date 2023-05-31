@@ -15,17 +15,17 @@ class Job:
         self.j_idx = kwargs['job_index']
         self.trajectory = kwargs['trajectory']
         self.pt_by_m_idx = kwargs['processing_time_list'] # processing time ordered by machine index #1, 2, ... N, but by operations
-        # a stack to store incomplete operations' processing time, variance may apply
+        # processing time seed
         seed = self.pt_by_m_idx[self.trajectory]
         if kwargs['pt_cv'] == 0:
             self.remaining_pt = list(seed)
-            self.actual_remaining_pt = list(seed)
+            self.actual_remaining_pt = list(seed) # a stack of actual processing time, equals expected pt
         else:
             self.remaining_pt = list(seed)
             actual_pt = np.around(np.random.normal(seed, seed*kwargs['pt_cv']), decimals=1).clip(*kwargs['pt_range'])
-            self.actual_remaining_pt = list(actual_pt)
+            self.actual_remaining_pt = list(actual_pt) # a stack of actual processing time, different from expected pt
         # a stack of machine indices
-        self.remaining_m = list(self.trajectory)
+        self.remaining_m = list(self.trajectory) # a stack of machine index that job needs to visit
         # produce due date for job, which is proportional to the total processing time
         self.due = np.round(self.pt_by_m_idx.sum() * np.random.uniform(1.2, kwargs['due_tightness']) + self.env.now)        
         # optional attributes

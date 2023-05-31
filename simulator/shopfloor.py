@@ -43,14 +43,14 @@ class Shopfloor:
         # if the simulation completed without error and formal mode is activated, copy paste the log file to storage
         if "formal" in self.kwargs and self.kwargs['formal']:
             ct = ''.join([str(x) for x in time.strftime("%Y,%m,%d,%H,%M,%S").split(',')])
-            shutil.copy(Path.cwd()/"log"/"sim.log", Path.cwd()/"log"/"past"/"{}_sim.log".format(ct))
+            shutil.copy(Path(__file__).parent/"log"/"sim.log", Path(__file__).parent/"log"/"past"/"{}_sim.log".format(ct))
         if "draw_gantt" in self.kwargs and self.kwargs['draw_gantt']>0:
             painter = Draw(self.recorder, **self.kwargs)
 
 
 if __name__ == '__main__':
     spf = Shopfloor(m_no=5, span=50, pt_range=[1,10], due_tightness=2, E_utliz=0.8,
-                    sqc_rule='CR', machine_breakdown=True, MTBF=100, MTTR=10, random_bkd=True,
+                    sqc_rule='opt_scheduler', machine_breakdown=True, MTBF=100, MTTR=10, random_bkd=True,
                     processing_time_variability=True, pt_cv=0.1,
                     draw_gantt=5, save_gantt=True, seed = 10000)
     spf.run_simulation()

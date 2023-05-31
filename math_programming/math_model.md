@@ -11,6 +11,7 @@ $
 
 $
 J_{m} \subset J : \text{A set of jobs that need to be processed by machine } m \\
+T_{j} : \text{Trajectory of job } j \text{, a sequence of the index of machines that the job needs to visit}\\
 $
 
 ### 3. Paremeters

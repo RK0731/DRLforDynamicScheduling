@@ -1,27 +1,39 @@
+import pandas as pd
+import numpy as np
+from pathlib import Path
 import gurobipy as gp
 from gurobipy import GRB
 
-class Scheduler:
+class OPT_scheduler:
     def __init__(self, *args, **kwargs):
         for k, v in kwargs.items():
             setattr(self, k, v)
-        self.logger.debug('Gurobi scheduler is created')
-        pass
+        self.schedule = {}
+        self.grb_env = gp.Env(empty=False)
+        self.grb_env.setParam('LogToConsole', 0)
+        self.grb_env.setParam('LogFile', Path(__file__).parent/"log"/"gurobi.log")
+        self.grb_env.start()
 
 
-    def build_schedule(self, machines, jobs):
-        model = gp.Model(name="opt_scheduler")
-        # get the pairing of job and machine, to build the starting time of operation constraint
-        for j in jobs:
-            j_idx = j.j_idx
-            m_idx_list = j.remaining_m
-            pt_list = j.remaining_pt
-            opBeginVar = model.addVars(list(j_idx), m_idx_list, vtype=GRB.CONTINUOUS, name="operation_begin_T")
-        # the available time of all machines (the time them become available)
-        mAvailVar = model.addVars(list(j_idx), m_idx_list, vtype=GRB.CONTINUOUS, name="machine_avail_T")
-        # build the job pairs for all jobs that need to be processed on a same machine
-        jobPrecVar = model.addVars([1,2],[1,2,3], vtype=GRB.BINARY, name='job_prec')
+    def build_schedule(self, jobs):
+        with gp.Model(name="opt_scheduler", env=self.grb_env) as model:
+            # get the pairing of job and machine, to build the starting time of operation constraint
+            m_idx_list = []
+            for j in jobs:
+                j_idx = j.j_idx
+                remaining_m_list = j.remaining_m
+                pt_list = j.remaining_pt
+                varOpBegin = model.addVars(list(j_idx), m_idx_list, vtype=GRB.CONTINUOUS, name="v_operation_begin_T")
+            # the available time of all machines (the time them become available)
+            varMachineRel = model.addVars([m.m_idx for m in self.m_list], vtype=GRB.CONTINUOUS, name="v_machine_release_T")
+            # build the job pairs for all jobs that need to be processed on a same machine
+            varJobPrec = model.addVars([1,2],[1,2,3], vtype=GRB.BINARY, name='v_job_precedence')
+            varJobComp = model.addVars([1,2],[1,2,3], vtype=GRB.CONTINUOUS, name='v_job_completion_T')
 
 
     def convert_to_schedule(self):
+        pass
+
+
+    def draw_from_schedule(self):
         pass

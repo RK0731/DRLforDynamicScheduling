@@ -50,28 +50,28 @@ class Narrator:
         1.2 Machine initialization: knowing each other and specify the sequencing rule
         '''
         if 'sqc_rule' in kwargs:
-            # follow a complete schedule
-            if kwargs['sqc_rule'] == 'complete_schedule':
+            if kwargs['sqc_rule'] == 'complete_schedule': # follow a complete schedule
                 pass
-                #self.job_sequencing = complete_schedule.who_is_next()
-            # or using mathematical optimization to produce dynamic schedule
-            elif kwargs['sqc_rule'] == 'opt_scheduler':
-                pass
-                #self.job_sequencing = opt_schedule.who_is_next()
-            # otherwise a valid sequencing rule must be specified
-            try:
-                job_sequencing = eval(kwargs['sqc_rule']) # pass the sqc rule (function) to machine instance
-                self.logger.info("* Machine use {} sequencing rule".format(kwargs['sqc_rule']))
-            except Exception as e:
-                self.logger.error("Sequencing rule is invalid! Invalid entry: {}".format(kwargs['sqc_rule']))
-                self.logger.error(str(e))
-                raise Exception
+                #self.job_sequencing_func = complete_schedule.who_is_next()
+            elif kwargs['sqc_rule'] == 'opt_scheduler': # or using mathematical optimization to produce dynamic schedule
+                self.central_scheduler = OPT_scheduler()
+                job_sequencing_func = self.central_scheduler.draw_from_schedule
+                self.logger.info("* Optimization mode is ON, A centralized Gurobi scheduler is created, all machines use a central schedule")
+            else: # otherwise a valid sequencing rule must be specified
+                try:
+                    job_sequencing_func = eval(kwargs['sqc_rule']) # pass the sqc rule (function) to machine instance
+                    self.logger.info("* Machine use {} sequencing rule".format(kwargs['sqc_rule']))
+                except Exception as e:
+                    self.logger.error("Sequencing rule is invalid! Invalid entry: {}".format(kwargs['sqc_rule']))
+                    self.logger.error(str(e))
+                    raise Exception
         else:
-            # default sequencing rule is FIFO
+            # if no argument is given, default sequencing rule is FIFO
             self.logger.info("* Machine {} uses default FIFO rule".format(self.m_idx))
-            job_sequencing = FIFO
+            job_sequencing_func = FIFO
+        # initialization, let all machines know each other and pass the sqc rule to them
         for m in self.m_list:
-            m.initialization(machine_list = self.m_list, sqc_rule = job_sequencing)
+            m.initialization(machine_list = self.m_list, sqc_rule = job_sequencing_func)
         '''
         2. Optional part I: machine breakdown
         '''
@@ -129,6 +129,8 @@ class Narrator:
             # if machine is currently running, the breakdown will commence after current operation
             actual_begin = max(self.m_list[m_idx].release_time, self.env.now)
             actual_end = actual_begin + bkd_t
+            self.m_list[m_idx].release_time = actual_begin + self.MTTR
+            # time of breakdown
             yield self.env.timeout(actual_end - self.env.now)
             self.recorder.m_bkd_dict[m_idx].append([actual_begin, actual_end])
             self.m_list[m_idx].working_event.succeed()

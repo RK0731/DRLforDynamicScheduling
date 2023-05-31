@@ -35,7 +35,6 @@ class Machine:
         # record extra data for learning, initially not activated, can be activated by brains
         self.sequencing_learning_event = self.env.event()
         self.routing_learning_event = self.env.event()
-        self.env.process(self.process_production())
 
 
     def initialization(self, **kwargs):
@@ -43,6 +42,8 @@ class Machine:
         self.m_list = kwargs['machine_list']
         # specify the sequencing decision maker
         self.job_sequencing = kwargs['sqc_rule']
+        self.env.process(self.process_production())
+
 
     # The main function, simulates the production
     def process_production(self):
@@ -56,7 +57,7 @@ class Machine:
             # if we have more than one queuing jobs, sequencing is required
             if len(self.queue) > 1:
                 # the returned value is picked job's position in machine's queue
-                self.sqc_decision_pos = self.job_sequencing(self.queue)
+                self.sqc_decision_pos = self.job_sequencing(jobs = self.queue)
                 self.picked_j_instance = self.queue[self.sqc_decision_pos]
                 self.logger.info("{} >>> SQC on: Machine {} picks Job {}".format(
                     self.env.now, self.m_idx, self.picked_j_instance.j_idx))
@@ -142,7 +143,6 @@ class Machine:
 
 
     def __del__(self):
-        self.logger.debug("{} >>> MACHINE {} instance deleted".format(self.env.now, self.m_idx))
         # append the operation histroy to the recorder
         self.recorder.m_cum_runtime_dict[self.m_idx] = self.cumulative_runtime
 
