@@ -29,21 +29,19 @@ class Narrator:
         1.1 Core components: machines and dynamic job arrivals
         '''
         self.m_no = len(self.m_list) # related to the number of operations
-        self.exp_pt = np.average(self.pt_range) # expected processing time of individual operations
-        # variables to track the job related system status
-        self.in_system_job_no = 0
-        self.j_idx = 0
+        _E_pt = np.average(self.pt_range) # expected processing time of individual operations
+        self.j_idx = 0 # job index, start from 0
         # produce the feature of new job arrivals by Poison distribution
         # draw the time interval betwen job arrivals from an exponential distribution
         # The mean of an exp random variable X with rate parameter λ is given by:
         # 1/λ (which equals the term "beta" in np exp function)
-        self.beta = self.exp_pt / self.E_utliz # beta is the average time interval between job arrivals
-        self.logger.debug("The expected utilization rate (excluding machine down time) is: {}%".format(self.E_utliz*100))
-        self.logger.debug("Converted expected interval between job arrival is: {} (m_no: {}, pt_range: {}, exp_pt: {})".format(self.beta, self.m_no, self.pt_range, self.exp_pt))
+        _beta = _E_pt / self.E_utliz # beta is the average time interval between job arrivals
+        self.logger.debug("The expected utilization rate (excluding machine down time) is: [{}%]".format(self.E_utliz*100))
+        self.logger.debug("Converted expected interval between job arrival is: [{}] (m_no: [{}], pt_range: {}, exp_pt: [{}])".format(_beta, self.m_no, self.pt_range, _E_pt))
         # number of new jobs arrive within simulation, with 10% extra jobs as buffer
-        self.total_no = np.round(1.1*self.span/self.beta).astype(int)
+        self.total_no = np.round(1.1*self.span/_beta).astype(int)
         # the interval between job arrivals by exponential distribution
-        self.arrival_interval = np.random.exponential(self.beta, self.total_no).round()
+        self.arrival_interval = np.random.exponential(_beta, self.total_no).round()
         # process the job arrival function
         self.env.process(self.process_job_creation())
         ''' 
@@ -54,23 +52,23 @@ class Narrator:
             if kwargs['sqc_rule'] == 'complete_schedule': # follow a complete schedule
                 pass
                 #self.job_sequencing_func = complete_schedule.who_is_next()
-            elif kwargs['sqc_rule'] == 'opt_scheduler': # or using mathematical optimization to produce dynamic schedule
+            elif kwargs['sqc_rule'] == SQC_rule.opt_scheduler: # or using mathematical optimization to produce dynamic schedule
                 self.central_scheduler = OPT_scheduler(**self.kwargs)
                 self.opt_mode = True
                 job_sequencing_func = self.central_scheduler.draw_from_schedule
-                self.logger.info("* Optimization mode is ON, A centralized Gurobi scheduler is created, all machines use a central schedule")
+                self.logger.info("* Optimization mode is ON, A [centralized Gurobi scheduler] is created, all machines use a central schedule")
             else: # otherwise a valid sequencing rule must be specified
                 try:
-                    job_sequencing_func = eval(kwargs['sqc_rule']) # pass the sqc rule (function) to machine instance
-                    self.logger.info("* Machine use {} sequencing rule".format(kwargs['sqc_rule']))
+                    job_sequencing_func = kwargs['sqc_rule']
+                    self.logger.info("* Machine use [{}] sequencing rule".format(job_sequencing_func.__name__))
                 except Exception as e:
-                    self.logger.error("Sequencing rule is invalid! Invalid entry: {}".format(kwargs['sqc_rule']))
+                    self.logger.error("Sequencing rule is invalid! Invalid entry: [{}]".format(kwargs['sqc_rule']))
                     self.logger.error(str(e))
                     raise Exception
         else:
             # if no argument is given, default sequencing rule is FIFO
             self.logger.info("* Machine {} uses default FIFO rule".format(self.m_idx))
-            job_sequencing_func = FIFO
+            job_sequencing_func = SQC_rule.FIFO
         # initialization, let all machines know each other and pass the sqc rule to them
         for m in self.m_list:
             m.initialization(machine_list = self.m_list, sqc_rule = job_sequencing_func)
@@ -80,13 +78,13 @@ class Narrator:
         if self.machine_breakdown == True:
             for m_idx, m in enumerate(self.m_list):
                 self.env.process(self.process_machine_breakdown(m_idx, kwargs['random_bkd']))
-            self.logger.debug("Machine breakdown mode is ON, MTBF: {}, MTTR: {}".format(self.MTBF, self.MTTR))
+            self.logger.debug("Machine breakdown mode is ON, MTBF: [{}], MTTR: [{}]".format(self.MTBF, self.MTTR))
         '''
         3. Optional part II: processing time variablity
         '''
         if kwargs['processing_time_variability'] and kwargs['pt_cv'] > 0:
             self.pt_cv = kwargs['pt_cv']
-            self.logger.debug("Variable processing time mode is ON, coefficient of variance: {}".format(kwargs['pt_cv']))
+            self.logger.debug("Variable processing time mode is ON, coefficient of variance: [{}]".format(kwargs['pt_cv']))
         else:
             self.pt_cv = 0
 
@@ -108,6 +106,8 @@ class Narrator:
                 env = self.env, logger = self.logger, recorder = self.recorder,
                 job_index = self.j_idx, trajectory = trajectory_seed.copy(), processing_time_list = ptl.copy(),
                 pt_range = self.pt_range, pt_cv = self.pt_cv, due_tightness = self.due_tightness)
+            # track thjis job
+            self.recorder.in_system_jobs[self.j_idx] = job_instance
             # build a new schedule if optimization mode is on
             if self.opt_mode:
                 self.central_scheduler.solve_problem()
@@ -119,7 +119,7 @@ class Narrator:
 
 
     # periodicall disable machines
-    def process_machine_breakdown(self, m_idx, random_bkd):
+    def process_machine_breakdown(self, m_idx:int, random_bkd:bool):
         while self.env.now < self.span:
             # draw the time interval between two break downs
             if random_bkd:
@@ -149,7 +149,7 @@ class Narrator:
                       headers="firstrow")))
 
 
-    def build_sqc_experience_repository(self,m_list): # build two dictionaries
+    def build_sqc_experience_repository(self, m_list): # build two dictionaries
         self.incomplete_experience = {}
         self.rep_memo = {}
         for m in m_list: # each machine will have a list in the dictionaries
@@ -171,6 +171,7 @@ class Recorder:
         for k, v in kwargs.items():
             setattr(self, k, v)
         # record the job's journey
+        self.in_system_jobs = {}
         self.j_arrival_dict = {}
         self.j_departure_dict = {}
         self.j_op_dict = {}

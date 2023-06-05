@@ -20,6 +20,7 @@ class Machine:
         # the time that agent make current and next decision
         self.decision_time = 0
         self.release_time = 0
+        self.current_job = None
         # Initialize the possible events during production
         self.queue = []
         self.sufficient_stock = self.env.event()
@@ -67,14 +68,13 @@ class Machine:
                 self.picked_j_instance = self.queue[self.sqc_decision_pos]
                 self.logger.info("{} >>> SQC off: Machine {} processes Job {}".format(
                     self.env.now, self.m_idx, self.picked_j_instance.j_idx))
-            # retrive the information of job
-            pt = self.picked_j_instance.remaining_operations[0][2] # the actual processing time in this stage, can be different from expected value
-            wait = self.env.now - self.picked_j_instance.arrival_t # time that job waited before being picked
-            self.after_decision(pt, wait)
-            self.logger.debug("{} >>> PT: Job {} on Machine {} proc.t, expected: {}, actual: {}".format(
-                self.env.now, self.picked_j_instance.j_idx, self.m_idx, self.picked_j_instance.remaining_operations[0][1], pt))
-            # The production process (yield the processing time of operation)
-            yield self.env.timeout(pt)
+            # update job instance, and get the time of operation
+            actual_pt = self.after_decision()
+            self.logger.debug(
+                "{} >>> PT: Job {} on Machine {} proc.t, expected: {}, actual: {}".format(
+                self.env.now, self.picked_j_instance.j_idx, self.m_idx, self.picked_j_instance.remaining_operations[0][1], actual_pt))
+            # The production process (yield the actual processing time of operation)
+            yield self.env.timeout(actual_pt)
             self.logger.info("{} >>> DEP: Job {} departs from Machine {}".format(
                 self.env.now, self.picked_j_instance.j_idx, self.m_idx))
             # transfer job to next station or remove it from system
@@ -129,14 +129,21 @@ class Machine:
         pass
 
 
-    def after_decision(self, pt, wait):
+    def after_decision(self):
+        pt = self.picked_j_instance.remaining_operations[0][2] # the actual processing time in this stage, can be different from expected value
+        wait = self.env.now - self.picked_j_instance.arrival_t # time that job queued before being picked
+        # record this decision/operation
         self.picked_j_instance.record_operation(self.m_idx, self.env.now, pt, wait)
+        # update status of machine
         self.release_time = self.env.now + pt
         self.cumulative_runtime += pt
+        self.current_job = self.picked_j_instance.j_idx
+        return pt
 
 
     def after_operation(self):
         leaving_job = self.queue.pop(self.sqc_decision_pos)
+        self.current_job = None
         next = leaving_job.after_operation()
         if next > -1: # if returned index is valid
             self.m_list[next].job_arrival(leaving_job)
