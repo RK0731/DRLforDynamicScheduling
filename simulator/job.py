@@ -18,14 +18,16 @@ class Job:
         # processing time seed
         seed = self.pt_by_m_idx[self.trajectory]
         if kwargs['pt_cv'] == 0:
-            self.remaining_pt = list(seed)
-            self.actual_remaining_pt = list(seed) # a stack of actual processing time, equals expected pt
+            remaining_pt = list(seed)
+            actual_remaining_pt = list(seed) # a stack of actual processing time, equals expected pt
         else:
-            self.remaining_pt = list(seed)
+            remaining_pt = list(seed)
             actual_pt = np.around(np.random.normal(seed, seed*kwargs['pt_cv']), decimals=1).clip(*kwargs['pt_range'])
-            self.actual_remaining_pt = list(actual_pt) # a stack of actual processing time, different from expected pt
+            actual_remaining_pt = list(actual_pt) # a stack of actual processing time, different from expected pt
         # a stack of machine indices
-        self.remaining_m = list(self.trajectory) # a stack of machine index that job needs to visit
+        remaining_machines = list(self.trajectory) # a stack of machine index that job needs to visit
+        # zip remaining machines, expected pt, and actual pt
+        self.remaining_operations = list(zip(remaining_machines, remaining_pt, actual_remaining_pt))
         # produce due date for job, which is proportional to the total processing time
         self.due = np.round(self.pt_by_m_idx.sum() * np.random.uniform(1.2, kwargs['due_tightness']) + self.env.now)        
         # optional attributes
@@ -34,7 +36,7 @@ class Job:
         # data recording
         self.operation_record = []
         self.logger.info("{} >>> JOB {} created, trajectory: {}, exp.pt: {}, actual pt: {}, due: {}".format(
-            self.env.now, self.j_idx, self.trajectory , self.remaining_pt, self.actual_remaining_pt, self.due))
+            self.env.now, self.j_idx, self.trajectory , remaining_pt, actual_remaining_pt, self.due))
 
 
     def before_operation(self):
@@ -44,11 +46,11 @@ class Job:
     # update the information, get ready for transfer or exit
     def after_operation(self, *args):
         # if job is not completed
-        if len(self.remaining_m) > 1:
-            self.remaining_pt.pop(0)
-            self.actual_remaining_pt.pop(0)
-            self.remaining_m.pop(0)
-            next = self.remaining_m[0] # next station's index
+        if len(self.remaining_operations) > 1:
+            # pop current operation
+            self.remaining_operations.pop(0)
+            # retrieve machine index from next operation
+            next = self.remaining_operations[0][0]
             return next
         else:
             self.completion()

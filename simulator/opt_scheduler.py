@@ -9,13 +9,13 @@ class OPT_scheduler:
         for k, v in kwargs.items():
             setattr(self, k, v)
         self.schedule = {}
-        self.grb_env = gp.Env(empty=False)
-        self.grb_env.setParam('LogToConsole', 0)
-        self.grb_env.setParam('LogFile', Path(__file__).parent/"log"/"gurobi.log")
-        self.grb_env.start()
+        with gp.Env(empty=False) as self.grb_env:
+            self.grb_env.setParam('LogToConsole', 0)
+            self.grb_env.setParam('LogFile', str(Path(__file__).parent/"log"/"gurobi.log"))
+            self.grb_env.start()
 
 
-    def build_schedule(self, jobs):
+    def solve_problem(self, jobs):
         with gp.Model(name="opt_scheduler", env=self.grb_env) as model:
             # get the pairing of job and machine, to build the starting time of operation constraint
             m_idx_list = []
@@ -35,5 +35,5 @@ class OPT_scheduler:
         pass
 
 
-    def draw_from_schedule(self):
+    def draw_from_schedule(self, jobs, m_idx, *args):
         pass

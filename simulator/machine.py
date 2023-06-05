@@ -57,7 +57,7 @@ class Machine:
             # if we have more than one queuing jobs, sequencing is required
             if len(self.queue) > 1:
                 # the returned value is picked job's position in machine's queue
-                self.sqc_decision_pos = self.job_sequencing(jobs = self.queue)
+                self.sqc_decision_pos = self.job_sequencing(jobs = self.queue, m_idx = self.m_idx)
                 self.picked_j_instance = self.queue[self.sqc_decision_pos]
                 self.logger.info("{} >>> SQC on: Machine {} picks Job {}".format(
                     self.env.now, self.m_idx, self.picked_j_instance.j_idx))
@@ -68,11 +68,11 @@ class Machine:
                 self.logger.info("{} >>> SQC off: Machine {} processes Job {}".format(
                     self.env.now, self.m_idx, self.picked_j_instance.j_idx))
             # retrive the information of job
-            pt = self.picked_j_instance.actual_remaining_pt[0] # the actual processing time in this stage, can be different from expected value
+            pt = self.picked_j_instance.remaining_operations[0][2] # the actual processing time in this stage, can be different from expected value
             wait = self.env.now - self.picked_j_instance.arrival_t # time that job waited before being picked
             self.after_decision(pt, wait)
             self.logger.debug("{} >>> PT: Job {} on Machine {} proc.t, expected: {}, actual: {}".format(
-                self.env.now, self.picked_j_instance.j_idx, self.m_idx, self.picked_j_instance.remaining_pt[0], pt))
+                self.env.now, self.picked_j_instance.j_idx, self.m_idx, self.picked_j_instance.remaining_operations[0][1], pt))
             # The production process (yield the processing time of operation)
             yield self.env.timeout(pt)
             self.logger.info("{} >>> DEP: Job {} departs from Machine {}".format(

@@ -70,4 +70,4 @@ class Draw:
             plt.pause(kwargs['draw_gantt'])
             plt.close(fig)
         if 'save_gantt' in kwargs and kwargs['save_gantt']:
-            fig.savefig(Path() / 'log' / 'gantt_chart.png', dpi=600, bbox_inches='tight')
+            fig.savefig(Path(__file__).parent / 'log' / 'gantt_chart.png', dpi=600, bbox_inches='tight')

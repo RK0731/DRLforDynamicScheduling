@@ -49,12 +49,14 @@ class Narrator:
         ''' 
         1.2 Machine initialization: knowing each other and specify the sequencing rule
         '''
+        self.opt_mode = False
         if 'sqc_rule' in kwargs:
             if kwargs['sqc_rule'] == 'complete_schedule': # follow a complete schedule
                 pass
                 #self.job_sequencing_func = complete_schedule.who_is_next()
             elif kwargs['sqc_rule'] == 'opt_scheduler': # or using mathematical optimization to produce dynamic schedule
-                self.central_scheduler = OPT_scheduler()
+                self.central_scheduler = OPT_scheduler(**self.kwargs)
+                self.opt_mode = True
                 job_sequencing_func = self.central_scheduler.draw_from_schedule
                 self.logger.info("* Optimization mode is ON, A centralized Gurobi scheduler is created, all machines use a central schedule")
             else: # otherwise a valid sequencing rule must be specified
@@ -106,6 +108,9 @@ class Narrator:
                 env = self.env, logger = self.logger, recorder = self.recorder,
                 job_index = self.j_idx, trajectory = trajectory_seed.copy(), processing_time_list = ptl.copy(),
                 pt_range = self.pt_range, pt_cv = self.pt_cv, due_tightness = self.due_tightness)
+            # build a new schedule if optimization mode is on
+            if self.opt_mode:
+                self.central_scheduler.solve_problem()
             # after creating a job, assign it to the first machine along its trajectory
             first_m = trajectory_seed[0]
             self.m_list[first_m].job_arrival(job_instance)
