@@ -104,13 +104,14 @@ class Narrator:
             # new job instance
             job_instance = Job(
                 env = self.env, logger = self.logger, recorder = self.recorder,
-                job_index = self.j_idx, trajectory = trajectory_seed.copy(), processing_time_list = ptl.copy(),
+                j_idx = self.j_idx, trajectory = trajectory_seed.copy(), pt_by_m_idx = ptl.copy(),
                 pt_range = self.pt_range, pt_cv = self.pt_cv, due_tightness = self.due_tightness)
             # track thjis job
             self.recorder.in_system_jobs[self.j_idx] = job_instance
             # build a new schedule if optimization mode is on
             if self.opt_mode:
                 self.central_scheduler.solve_problem()
+                self.logger.debug("Call central scheduler to build schedule")
             # after creating a job, assign it to the first machine along its trajectory
             first_m = trajectory_seed[0]
             self.m_list[first_m].job_arrival(job_instance)
@@ -180,8 +181,3 @@ class Recorder:
         self.pt_mean_dict = {}
         self.pt_std_dict = {}
         self.expected_tardiness_dict = {}
-
-
-class complete_schedule:
-    def who_is_next(self, dummy_jobs):
-        return self.grand_schedule[0]

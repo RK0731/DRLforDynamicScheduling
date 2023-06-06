@@ -130,10 +130,12 @@ class Machine:
 
 
     def after_decision(self):
+        # get data of upcoming operation
         pt = self.picked_j_instance.remaining_operations[0][2] # the actual processing time in this stage, can be different from expected value
         wait = self.env.now - self.picked_j_instance.arrival_t # time that job queued before being picked
         # record this decision/operation
         self.picked_j_instance.record_operation(self.m_idx, self.env.now, pt, wait)
+        self.picked_j_instance.status = 'processing'
         # update status of machine
         self.release_time = self.env.now + pt
         self.cumulative_runtime += pt
@@ -143,6 +145,9 @@ class Machine:
 
     def after_operation(self):
         leaving_job = self.queue.pop(self.sqc_decision_pos)
+        # reset the decision
+        self.sqc_decision_pos = None
+        leaving_job.status = 'queuing'
         self.current_job = None
         next = leaving_job.after_operation()
         if next > -1: # if returned index is valid

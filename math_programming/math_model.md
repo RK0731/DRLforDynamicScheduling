@@ -32,9 +32,12 @@ $
 
 ### 5. Objective and Constraints
 $\text{Alternative objectives:} \\[10pt]
-\text{(1) Minimizing cumulative tardiness:} \\[10pt]
+\text{(a) Minimizing cumulative tardiness:} \\[10pt]
 \min \displaystyle \sum_{j \in J}\left({c_j - d_j} \right) \\[10pt]
-\text{(2) Minimizing makespan (for static problem instance):} \\[10pt]
+\text{(b) Minimizing makespan (for static problem instance):} \\[10pt]
 \min \max \ c_j \quad \forall j\in J\\[10pt]
 \text{s.t.}\\
+(1)\ \text{All operations must be processed by pre-defined sequence} \\
+(2)\ \text{The operations of jobs on a mahcine must conform their precedence}\\
+\text{Dummy constraint: get the tardiness of a job}
 $

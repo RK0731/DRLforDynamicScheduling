@@ -3,48 +3,47 @@ This is the job class, carries the information of trajectory, processing time, d
 """
 
 import numpy as np
-from dataclasses import dataclass
-from typing import Optional, Union, Literal, Any
+from pydantic import BaseModel
+from typing import Optional, Union, Literal
 
 
-@dataclass
+class JData(BaseModel):
+    status: Optional[Literal['queuing', 'processing', 'completed']] = 'queuing'
+
+
 class Job:
-    env: Any
-    logger: Any
-    recorder: Any
-    j_idx: int
-    trajectory: np.array
-    pt_by_m_idx: np.array
-    pt_range: list[Union[int, float]]
-    pt_cv: Union[int, float]
-    due_tightness: float
-    status: Literal["queuing", "processing", "completed"] = "queuing"
-    transfer_t: float = 0
-
-
-    def __post_init__(self):
-        print(self.pt_cv, type(self.pt_cv), self.status)
+    def __init__(self, *args, **kwargs):
+        # all inherited attributes
+        for k, v in kwargs.items():
+            setattr(self, k, v)
         # new intrinsic attributes
         self.creation_t = self.arrival_t = self.env.now
+        self.status = 'queuing'
+        self.j_idx = kwargs['job_index']
+        _trajectory = kwargs['trajectory']
+        _pt_by_m_idx = kwargs['processing_time_list'] # processing time ordered by machine index #1, 2, ... N, but by operations
         # re-order the processing time by the operatrions
-        _pt_by_ops = self.pt_by_m_idx[self.trajectory]
-        if self.pt_cv == 0:
+        _pt_by_ops = _pt_by_m_idx[_trajectory]
+        if kwargs['pt_cv'] == 0:
             self.remaining_pt = list(_pt_by_ops)
             self.actual_remaining_pt = list(_pt_by_ops) # a stack of actual processing time, equals expected pt
         else:
             self.remaining_pt = list(_pt_by_ops)
-            _actual_pt = np.around(np.random.normal(_pt_by_ops, _pt_by_ops*self.pt_cv), decimals=1).clip(*self.pt_range)
+            _actual_pt = np.around(np.random.normal(_pt_by_ops, _pt_by_ops*kwargs['pt_cv']), decimals=1).clip(*kwargs['pt_range'])
             self.actual_remaining_pt = list(_actual_pt) # a stack of actual processing time, different from expected pt
         # a stack of machine indices
-        self.remaining_machines = list(self.trajectory) # a stack of machine index that job needs to visit
+        self.remaining_machines = list(_trajectory) # a stack of machine index that job needs to visit
         # zip remaining machines, expected pt, and actual pt
         self.remaining_operations = list(zip(self.remaining_machines, self.remaining_pt, self.actual_remaining_pt))
         # produce due date for job, which is proportional to the total processing time
-        self.due = np.round(self.pt_by_m_idx.sum() * np.random.uniform(1.2, self.due_tightness) + self.env.now)        
+        self.due = np.round(_pt_by_m_idx.sum() * np.random.uniform(1.2, kwargs['due_tightness']) + self.env.now)        
+        # optional attributes
+        if 'transfer_time' in kwargs:
+            self.transfer_t = kwargs['transfer_time']
         # data recording
         self.operation_record = []
         self.logger.info("{} >>> JOB {} created, trajectory: {}, exp.pt: {}, actual pt: {}, due: {}".format(
-            self.env.now, self.j_idx, self.trajectory, self.remaining_pt, self.actual_remaining_pt, self.due))
+            self.env.now, self.j_idx, _trajectory, self.remaining_pt, self.actual_remaining_pt, self.due))
 
 
     def before_operation(self):
@@ -62,7 +61,7 @@ class Job:
             self.remaining_pt.pop(0)
             self.actual_remaining_pt.pop(0)
             # retrieve machine index from next operation
-            _next_m = self.remaining_machines[0]
+            _next_m = self.remaining_operations[0][0]
             return _next_m
         else:
             self.completion()

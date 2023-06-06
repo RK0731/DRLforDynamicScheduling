@@ -27,7 +27,7 @@ class Shopfloor:
             log_config = json.load(f)
             logging.config.dictConfig(log_config)
             self.logger = logging.getLogger("sim_logger")
-        self.recorder = Recorder(**kwargs)
+        self.recorder = Recorder(**kwargs) # recorder object shared by all other objects
         # STEP 2. create machines
         self.m_list = []
         self.logger.info("Simulation run at: {}".format(time.strftime("%Y-%m-%d, %H:%M:%S")))
@@ -53,10 +53,10 @@ class Shopfloor:
 
 
 if __name__ == '__main__':
-    spf = Shopfloor(m_no=5, span=50, pt_range=[1,10], due_tightness=2, E_utliz=0.8,
-                    machine_breakdown=True, MTBF=100, MTTR=10, random_bkd=True,
-                    processing_time_variability=True, pt_cv=0.1,
-                    draw_gantt=5, save_gantt=True, seed = 10000,
-                    sqc_rule=SQC_rule.opt_scheduler
+    spf = Shopfloor(m_no = 5, span = 50, pt_range = [1,10], due_tightness = 2, E_utliz = 0.8,
+                    machine_breakdown = True, MTBF = 100, MTTR = 10, random_bkd = True,
+                    processing_time_variability = True, pt_cv = 0.1,
+                    draw_gantt = 5, save_gantt = True, seed = 10000,
+                    sqc_rule = SQC_rule.FIFO
                     )
     spf.run_simulation()
