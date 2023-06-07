@@ -114,7 +114,7 @@ class Machine:
 
 
     # a new job (instance) arrives
-    def job_arrival(self, arriving_job):
+    def job_arrival(self, arriving_job: object):
         # add the job instance to queue
         self.queue.append(arriving_job)
         arriving_job.before_operation()
@@ -147,7 +147,6 @@ class Machine:
         leaving_job = self.queue.pop(self.sqc_decision_pos)
         # reset the decision
         self.sqc_decision_pos = None
-        leaving_job.status = 'queuing'
         self.current_job = None
         next = leaving_job.after_operation()
         if next > -1: # if returned index is valid
@@ -167,21 +166,6 @@ class Machine:
     # call this function after the completion of operation
     def state_update_all(self):
         pass
-
-
-    # update the information of progression, eralized and expected tardiness to event_creator !!!
-    def update_global_info_progression(self):
-        # realized: 0 if already tardy; exp: 0 is slack time is negative
-        realized = self.time_till_due.clip(0,1)
-        exp = self.slack.clip(0,1)
-        # update the machine's corresponding record in job creator, and several rates
-        self.event_creator.comp_rate_list[self.m_idx] = self.completion_rate
-        self.event_creator.comp_rate = np.concatenate(self.event_creator.comp_rate_list).mean()
-        self.event_creator.realized_tard_list[self.m_idx] = realized
-        self.event_creator.realized_tard_rate = 1 - np.concatenate(self.event_creator.realized_tard_list).mean()
-        self.event_creator.exp_tard_list[self.m_idx] = exp
-        self.event_creator.exp_tard_rate = 1 - np.concatenate(self.event_creator.exp_tard_list).mean()
-        self.event_creator.available_time_list[self.m_idx] = self.available_time
 
 
     '''

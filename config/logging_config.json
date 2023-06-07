@@ -18,7 +18,7 @@
       },
       "root_file": {
         "class": "logging.FileHandler",
-        "filename": "./simulator/log/sim.log",
+        "filename": "./log/sim.log",
         "mode": "w",
         "formatter": "brief"
       }

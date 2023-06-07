@@ -23,7 +23,7 @@ class Shopfloor:
         # STEP 1. important features shared by all machine and job instances
         self.env = simpy.Environment()
         self.kwargs = kwargs
-        with open(Path(__file__).parent / "config" / "logging_config.json") as f:
+        with open(Path.cwd() / "config" / "logging_config.json") as f:
             log_config = json.load(f)
             logging.config.dictConfig(log_config)
             self.logger = logging.getLogger("sim_logger")
@@ -45,7 +45,7 @@ class Shopfloor:
         # if the simulation completed without error and formal mode is activated, copy paste the log file to storage
         if "formal" in self.kwargs and self.kwargs['formal']:
             ct = ''.join([str(x) for x in time.strftime("%Y,%m,%d,%H,%M,%S").split(',')])
-            shutil.copy(Path(__file__).parent/"log"/"sim.log", Path(__file__).parent/"log"/"past"/"{}_sim.log".format(ct))
+            shutil.copy(Path.cwd() / "log" / "sim.log", Path.cwd() / "log" / "past" / "{}_sim.log".format(ct))
         if "draw_gantt" in self.kwargs and self.kwargs['draw_gantt']>0:
             painter = Draw(self.recorder, **self.kwargs)
 
@@ -57,6 +57,6 @@ if __name__ == '__main__':
                     machine_breakdown = True, MTBF = 100, MTTR = 10, random_bkd = True,
                     processing_time_variability = True, pt_cv = 0.1,
                     draw_gantt = 5, save_gantt = True, seed = 10000,
-                    sqc_rule = SQC_rule.FIFO
+                    sqc_rule = SQC_rule.opt_scheduler
                     )
     spf.run_simulation()

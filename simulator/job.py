@@ -22,8 +22,8 @@ class Job:
     transfer_t: float = 0
 
 
+    # create additional features
     def __post_init__(self):
-        print(self.pt_cv, type(self.pt_cv), self.status)
         # new intrinsic attributes
         self.creation_t = self.arrival_t = self.env.now
         # re-order the processing time by the operatrions
@@ -55,6 +55,8 @@ class Job:
     def after_operation(self, *args):
         # if job is not completed
         if len(self.remaining_operations) > 1:
+            self.logger.debug('Job {} is tagged as "queuing"'.format(self.j_idx))
+            self.status = "queuing"
             # pop current operation tuple
             self.remaining_operations.pop(0)
             # and individual lists
@@ -65,6 +67,7 @@ class Job:
             _next_m = self.remaining_machines[0]
             return _next_m
         else:
+            self.status = "completed"
             self.completion()
             # append the operation histroy to the recorder
             self.recorder.j_op_dict[self.j_idx] = self.operation_record
