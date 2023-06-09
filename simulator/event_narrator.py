@@ -110,8 +110,8 @@ class Narrator:
             self.recorder.in_system_jobs[self.j_idx] = job_instance
             # build a new schedule if optimization mode is on
             if self.opt_mode:
+                self.logger.debug("New job arrived, call central scheduler to build schedule")
                 self.central_scheduler.solve_problem()
-                self.logger.debug("Call central scheduler to build schedule")
             # after creating a job, assign it to the first machine along its trajectory
             first_m = trajectory_seed[0]
             self.m_list[first_m].job_arrival(job_instance)
