@@ -68,77 +68,84 @@ class OPT_scheduler:
                 PART I: create the variables and necessary pairs
                 '''
                 # 1. time of the beginning of operations, for all jobs and their remaining operations
-                varOpBeginT_pairs = []
-                constrOpSqc_pairs = []
-                constrJobLastOp_pairs = []
+                pairOpBeginT = []
+                pairOpSqc = []
+                pairJobLastOp = []
                 for _j_idx, _traj in self.remaining_trajectories.items():
                     # (j_idx, m_idx) pairing of begin time variables
-                    varOpBeginT_pairs += list(itertools.product([_j_idx], _traj))
+                    pairOpBeginT += list(itertools.product([_j_idx], _traj))
                     # [(j1_idx, m1_idx), (j2_idx, m2_idx)] pairings of begin time variables for consecutive operations
                     m_idx_pairs = list(zip(_traj, _traj[1:]))
-                    constrOpSqc_pairs += [list(itertools.product([_j_idx], p)) for p in m_idx_pairs]
+                    pairOpSqc += [list(itertools.product([_j_idx], p)) for p in m_idx_pairs]
                     print("\n{}, {}\n".format(_j_idx, _traj))
-                    constrJobLastOp_pairs += [(_j_idx, _traj[-1])]
+                    pairJobLastOp += [(_j_idx, _traj[-1])]
                 # continuous variables indicating the beginning time of all operations
-                varOpBeginT = model.addVars(varOpBeginT_pairs, vtype=GRB.CONTINUOUS, name="varOpBeginT")
-                self.logger.debug('Operation begin time pairs (j, m)\n{}'.format(varOpBeginT_pairs))
-                self.logger.debug('Job operations sequence pairs [(j, m1), (j, m2)]\n{}'.format(constrOpSqc_pairs))
+                varOpBeginT = model.addVars(pairOpBeginT, vtype=GRB.CONTINUOUS, name="varOpBeginT")
+                self.logger.debug('Operation begin time pairs (j, m)\n{}'.format(pairOpBeginT))
+                self.logger.debug('Job operations sequence pairs [(j, m1), (j, m2)]\n{}'.format(pairOpSqc))
                 # 2. job completion time
                 varJobCompT = model.addVars(list(self.remaining_trajectories.keys()), vtype=GRB.CONTINUOUS, name="varJobCompT")
                 # discrepency of completion time, can be eother earliness or tardiness
-                varJobCompDiscr = model.addVars(list(self.remaining_trajectories.keys()), vtype=GRB.CONTINUOUS, name="varJobCompDiscr")
-                # job tardiness, non-negative
+                varJobCompDiscr = model.addVars(list(self.remaining_trajectories.keys()), lb=-1000, vtype=GRB.CONTINUOUS, name="varJobCompDiscr")
+                # job tardiness, non-negative, no need for extra adjustment
                 varJobTardiness = model.addVars(list(self.remaining_trajectories.keys()), vtype=GRB.CONTINUOUS, name="varJobTardiness")
-                # schedule makespan
+                # schedule makespan, not adjusted by the starting time of a cycle
                 varMakespan = model.addVar(vtype=GRB.CONTINUOUS, name="varMakespan")
                 # 3. precedence variables for each pair of jobs on relevant machines, if they are intersected
-                varJobPrec_pairs = []
+                pairJobPrec = []
                 #print(self.job_intersections)
                 for (_j1, _j2), _intersec in self.job_intersections.items():
-                    varJobPrec_pairs += list(itertools.product([_j1], [_j2], _intersec))
+                    pairJobPrec += list(itertools.product([_j1], [_j2], _intersec))
                 # binary variable to indicate the precedence between job 1 and job 2 on a machine
                 # equals 0 if job 1 preceeds job 2 on that machine, 1 otherwise.
-                varJobPrec = model.addVars(varJobPrec_pairs, vtype=GRB.BINARY, name='varJobPrec')
-                self.logger.debug('Job precedence pairs (j1, j2, m)\n{}'.format(varJobPrec_pairs))
+                varJobPrec = model.addVars(pairJobPrec, vtype=GRB.BINARY, name='varJobPrec')
+                self.logger.debug('Job precedence pairs (j1, j2, m)\n{}'.format(pairJobPrec))
                 ''' 
                 PART II: specify the constraints
                 '''
                 # 1. a job's operations must be processed following job's trajectory
                 constrOpSqc = model.addConstrs(
-                    (varOpBeginT[j, m1] + self.in_system_jobs[j].pt_by_m_idx[m1] <= varOpBeginT[j, m2] for (j,m1), (j,m2) in constrOpSqc_pairs),
+                    (varOpBeginT[j, m1] + self.in_system_jobs[j].pt_by_m_idx[m1] <= varOpBeginT[j, m2] for (j,m1), (j,m2) in pairOpSqc),
                     name = 'constrOpSqc')
                 # 2. all job's operations can be processed only after machine becomes available
                 constrMachineAvail = model.addConstrs(
-                    (varOpBeginT[j, m] >= self.machine_release_T[m] for j, m in varOpBeginT_pairs),
+                    (varOpBeginT[j, m] >= self.machine_release_T[m] for j, m in pairOpBeginT),
                     name = 'constrMachineAvail')
                 # 3. all operations must be processed following the precedence relations between jobs
                 # 3.1 if job 1 preceeds job 2 <--> precedence variable = 0
                 constrJobPrec_1 = model.addConstrs(
-                    ((varOpBeginT[j1, m] + self.in_system_jobs[j1].pt_by_m_idx[m]) * (1 - varJobPrec[j1, j2, m]) <= varOpBeginT[j2, m] for j1, j2, m in varJobPrec_pairs),
-                    name = 'constrJobPrec_1')
+                    ((varOpBeginT[j1, m] + self.in_system_jobs[j1].pt_by_m_idx[m]) * (1 - varJobPrec[j1, j2, m]) <= varOpBeginT[j2, m] for j1, j2, m in pairJobPrec),
+                    name = 'constrJobPrec_0')
                 # 3.2 if job 2 preceeds job 1 <--> precedence variable = 1
                 constrJobPrec_0 = model.addConstrs(
-                    ((varOpBeginT[j2, m] + self.in_system_jobs[j2].pt_by_m_idx[m]) * varJobPrec[j1, j2, m] <= varOpBeginT[j1, m] for j1, j2, m in varJobPrec_pairs),
-                    name = 'constrJobPrec_0')
+                    ((varOpBeginT[j2, m] + self.in_system_jobs[j2].pt_by_m_idx[m]) * varJobPrec[j1, j2, m] <= varOpBeginT[j1, m] for j1, j2, m in pairJobPrec),
+                    name = 'constrJobPrec_1')
                 # 3. get the completion time of jobs
                 constrJobCompT = model.addConstrs(
-                    (varJobCompT[j] == varOpBeginT[j, m] + self.in_system_jobs[j].pt_by_m_idx[m] for j, m in constrJobLastOp_pairs),
+                    (varJobCompT[j] == varOpBeginT[j, m] + self.in_system_jobs[j].pt_by_m_idx[m] for j, m in pairJobLastOp),
                     name = 'constrJobCompT')
                 # 4. get the completion discrepency (earliness and tardiness)
                 constrJobCompDiscr = model.addConstrs(
-                    (varJobCompDiscr[j] == varJobCompT[j] - self.in_system_jobs[j].due for j, m in constrJobLastOp_pairs),
+                    (varJobCompDiscr[j] == varJobCompT[j] - self.in_system_jobs[j].due for j, m in pairJobLastOp),
                     name = 'constrJobCompDiscr')
                 constrJobTardiness = model.addConstrs(
-                    (varJobTardiness[j] == gp.max_(varJobCompDiscr[j], constant = 0) for j, m in constrJobLastOp_pairs),
+                    (varJobTardiness[j] == gp.max_(varJobCompDiscr[j], constant = 0) for j, m in pairJobLastOp),
                     name = 'constrJobTardiness')
                 # the makespan if the maximum completion time
-                constrMakespan = model.addConstr(varMakespan == gp.max_([varJobCompT[j] for j, m in constrJobLastOp_pairs]),name = 'constrMakespan')
+                constrMakespan = model.addConstr(varMakespan == gp.max_([varJobCompT[j] for j, m in pairJobLastOp]),name = 'constrMakespan')
                 ''' 
                 PART III: specify the objective of optimization, and run the optimization
                 '''
+                model.update()
+                model.setParam('time_limit', 10)
                 # the primary objective of optimization, however, Gurobi can be "lazy" in pursuing this objective.
                 # optimization process terminates as soon as Gurobi finds no improvements can be obtained.
-                model.setObjective(varJobCompDiscr.sum(), GRB.MINIMIZE)
+                model.setObjective(varJobTardiness.sum(), GRB.MINIMIZE)
+                # this is the secondary objective in hierachical optimization
+                # it can only be optimized without degrading the primary objective
+                model.setObjectiveN(varMakespan, 1, -1)
+
+
                 model.optimize()
                 '''
                 PART IV: convert the result to valid schedule
