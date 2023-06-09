@@ -18,8 +18,8 @@ class Machine:
         for k, v in kwargs.items():
             setattr(self, k, v)
         # the time that agent make current and next decision
-        self.decision_time = 0
-        self.release_time = 0
+        self.decision_T = 0
+        self.release_T = 0
         self.current_job = None
         # Initialize the possible events during production
         self.queue = []
@@ -54,7 +54,7 @@ class Machine:
         # the loop that will run till the end of simulation
         while True:
             # record the time of the sequencing decision, used as the index of produciton record in job creator
-            self.decision_time = self.env.now
+            self.decision_T = self.env.now
             # if we have more than one queuing jobs, sequencing is required
             if len(self.queue) > 1:
                 # the returned value is picked job's position in machine's queue
@@ -132,12 +132,13 @@ class Machine:
     def after_decision(self):
         # get data of upcoming operation
         pt = self.picked_j_instance.remaining_operations[0][2] # the actual processing time in this stage, can be different from expected value
-        wait = self.env.now - self.picked_j_instance.arrival_t # time that job queued before being picked
+        wait = self.env.now - self.picked_j_instance.arrival_T # time that job queued before being picked
         # record this decision/operation
         self.picked_j_instance.record_operation(self.m_idx, self.env.now, pt, wait)
         self.picked_j_instance.status = 'processing'
-        # update status of machine
-        self.release_time = self.env.now + pt
+        # update status of picked job and machine
+        self.picked_j_instance.available_T = self.env.now + pt
+        self.release_T = self.env.now + pt
         self.cumulative_runtime += pt
         self.current_job = self.picked_j_instance.j_idx
         return pt
@@ -184,9 +185,9 @@ class Machine:
         # only when they have to choose from several queuing jobs
         try:
             # check whether corresponding experience exists, if not, ends at this line
-            self.event_creator.incomplete_rep_memo[self.m_idx][self.decision_time]
-            #print('PARAMETERS',self.m_idx,self.decision_time,self.env.now)
-            #print('BEFORE\n',self.event_creator.incomplete_rep_memo[self.m_idx][self.decision_time])
+            self.event_creator.incomplete_rep_memo[self.m_idx][self.decision_T]
+            #print('PARAMETERS',self.m_idx,self.decision_T,self.env.now)
+            #print('BEFORE\n',self.event_creator.incomplete_rep_memo[self.m_idx][self.decision_T])
             # if yes, get the global state
             local_data = self.sequencing_data_generation()
             s_t = self.build_state(local_data)
@@ -194,14 +195,14 @@ class Machine:
             r_t = self.reward_function() # can change the reward function, by sepecifying before the training
             #print(self.env.now, r_t)
             self.event_creator.sqc_reward_record.append([self.env.now, r_t])
-            self.event_creator.incomplete_rep_memo[self.m_idx][self.decision_time] += [s_t, r_t]
+            self.event_creator.incomplete_rep_memo[self.m_idx][self.decision_T] += [s_t, r_t]
             #print(self.event_creator.incomplete_rep_memo[self.m_idx])
-            #print(self.event_creator.incomplete_rep_memo[self.m_idx][self.decision_time])
-            complete_exp = self.event_creator.incomplete_rep_memo[self.m_idx].pop(self.decision_time)
+            #print(self.event_creator.incomplete_rep_memo[self.m_idx][self.decision_T])
+            complete_exp = self.event_creator.incomplete_rep_memo[self.m_idx].pop(self.decision_T)
             # and add it to rep_memo
             self.event_creator.rep_memo[self.m_idx].append(complete_exp)
             #print(self.event_creator.rep_memo[self.m_idx])
-            #print('AFTER\n',self.event_creator.incomplete_rep_memo[self.m_idx][self.decision_time])
+            #print('AFTER\n',self.event_creator.incomplete_rep_memo[self.m_idx][self.decision_T])
             #print(self.m_idx,self.env.now,'state: ',s_t,'reward: ',r_t)
         except:
             pass

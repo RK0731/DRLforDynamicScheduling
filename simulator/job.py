@@ -25,7 +25,8 @@ class Job:
     # create additional features
     def __post_init__(self):
         # new intrinsic attributes
-        self.creation_t = self.arrival_t = self.env.now
+        self.creation_T = self.arrival_T = self.env.now
+        self.available_T = self.env.now
         # re-order the processing time by the operatrions
         _pt_by_ops = self.pt_by_m_idx[self.trajectory]
         if self.pt_cv == 0:
@@ -48,7 +49,7 @@ class Job:
 
 
     def before_operation(self):
-        self.arrival_t = self.env.now
+        self.arrival_T = self.env.now
 
 
     # update the information, get ready for transfer or exit

@@ -1,6 +1,5 @@
 import numpy as np
 from tabulate import tabulate
-import matplotlib.pyplot as plt
 from job import *
 from sequencing_rule import *
 from opt_scheduler import *
