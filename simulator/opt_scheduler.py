@@ -132,7 +132,7 @@ class OPT_scheduler:
                 constrJobPrec_0 = model.addConstrs(
                     ((varOpBeginT[j2, m] + self.in_system_jobs[j2].pt_by_m_idx[m]) * varJobPrec[j1, j2, m] <= varOpBeginT[j1, m] for j1, j2, m in pairJobPrec),
                     name = 'constrJobPrec_1')
-                # 4. dummy variables
+                # 4. performance variables (dummies, not decisional)
                 # 4.1 get the completion time of jobs
                 constrJobCompT = model.addConstrs(
                     (varJobCompT[j] == varOpBeginT[j, m] + self.in_system_jobs[j].pt_by_m_idx[m] for j, m in pairJobLastOp),
@@ -151,7 +151,7 @@ class OPT_scheduler:
                 PART III: specify the objective of optimization, and run the optimization
                 '''
                 model.update()
-                model.setParam('time_limit', 10)
+                model.setParam('time_limit', 5)
                 # the primary objective of optimization, however, Gurobi can be "lazy"
                 # optimization process terminates as soon as Gurobi finds no improvements can be obtained
                 model.setObjective(varJobTardiness.sum(), GRB.MINIMIZE)
@@ -159,7 +159,7 @@ class OPT_scheduler:
                 # it can only be optimized without compromising the primary objective
                 #model.setObjectiveN(expr = varMakespan, index = 1, priority = -1)
                 for j, m in pairJobLastOp:
-                    model.setObjectiveN(varJobCompT[j], index = j+1, priority = -2)
+                    model.setObjectiveN(expr = varJobCompT[j], index = j+1, priority = -2)
                 # run the optimization
                 model.optimize()
                 '''
@@ -178,13 +178,19 @@ class OPT_scheduler:
         # reorder the vaOpBeginT (tuple dict), by the value of variable (begin time of operation)
         _reordered_varOpBeginT: list = sorted(varOpBeginT.items(), key = lambda item: item[1].X)
         # add job index to respective machine's new schedule
-        for (j ,m), var in _reordered_varOpBeginT:
-            self.schedule[m].append(j)
+        for (_j_idx , _m_idx), var in _reordered_varOpBeginT:
+            self.schedule[_m_idx].append(_j_idx)
         self.logger.info("New schedule (m_idx: [j_idx]): {}".format(self.schedule))
+        # and update all machine's status
+        for m in self.m_list:
+            if m.strategic_idle == True:
+                m.next_job_in_schedule = self.schedule[m.m_idx][0]
+                m.strategic_idle_proc.interrupt('New schedule developed')
+                m.strategic_idle_proc = self.env.process(m.process_strategic_idle())
 
 
     def draw_from_schedule(self, m_idx:int) -> int:
-        _1st_job_in_schedule = self.schedule[m_idx].pop(0)
+        next_job_in_schedule = self.schedule[m_idx].pop(0)
         # returned value is the job index in schedule, not the position of job in queue
         # as job may not yet arrived
-        return _1st_job_in_schedule
+        return next_job_in_schedule

@@ -70,8 +70,6 @@ class Job:
         else:
             self.status = "completed"
             self.completion()
-            # append the operation histroy to the recorder
-            self.recorder.j_op_dict[self.j_idx] = self.operation_record
             return -1
 
 
@@ -81,8 +79,8 @@ class Job:
 
     # all operations are complete and exit the system
     def completion(self):
+        # append the operation histroy to the recorder
+        self.recorder.j_op_dict[self.j_idx] = self.operation_record
         self.recorder.in_system_jobs.pop(self.j_idx)
         self.logger.info("{} >>> JOB {} completed".format(self.env.now, self.j_idx))
         self.tardiness = self.env.now - self.due
-
-
