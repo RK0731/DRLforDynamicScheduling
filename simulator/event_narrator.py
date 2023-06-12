@@ -142,10 +142,18 @@ class Narrator:
 
     
     def post_simulation(self):
+        # system configuration
         self.logger.info('Simulation Ended, here is the shopfloor configuration:\n\n{}\n'.format(
-            tabulate([["Category","Number", "Attributes"],
+            tabulate([["Category", "Number", "Attributes"],
                       ["Machine", self.m_no, "(1) Machine Breakdown: {}; (2) Random bkd: {}".format(self.kwargs['machine_breakdown'], self.kwargs['random_bkd'])],
                       ["Job", self.j_idx, "(1) pt range: {}; (2) pt cv: {}".format(self.pt_range, self.pt_cv)]],
+                      headers="firstrow")))
+        # performance
+        cum_tard = sum(self.recorder.j_tardiness_dict.values())
+        self.logger.info('Performance:\n\n{}\n'.format(
+            tabulate([["Category", "value"],
+                      ["Cum.Tard.", cum_tard],
+                      ["Avg.Tard.", round(cum_tard / (self.j_idx+1), 2)]],
                       headers="firstrow")))
 
 
@@ -172,11 +180,13 @@ class Recorder:
             setattr(self, k, v)
         # record the job's journey
         self.in_system_jobs = {}
-        self.j_arrival_dict = {}
-        self.j_departure_dict = {}
-        self.j_op_dict = {}
+        self.j_operation_dict = {}
+        self.j_tardiness_dict = {}
+        self.j_flowtime_dict = {}
         self.m_bkd_dict = {idx: [] for idx in range(kwargs['m_no'])}
         self.m_cum_runtime_dict = {}
         self.pt_mean_dict = {}
         self.pt_std_dict = {}
         self.expected_tardiness_dict = {}
+        # performance metric
+        self.cumulative_tardiness = 0

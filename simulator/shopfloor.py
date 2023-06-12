@@ -54,6 +54,6 @@ if __name__ == '__main__':
                     machine_breakdown = False, MTBF = 100, MTTR = 10, random_bkd = True,
                     processing_time_variability = False, pt_cv = 0.1,
                     draw_gantt = 5, save_gantt = True, seed = 10000,
-                    sqc_rule = SQC_rule.opt_scheduler
+                    sqc_rule = SQC_rule.FIFO
                     )
     spf.run_simulation()

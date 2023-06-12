@@ -16,7 +16,7 @@ class Draw:
         '''
         PART A. jobs' operation history
         '''
-        op_data = recorder.j_op_dict
+        op_data = recorder.j_operation_dict
         for x in op_data.items():
             j_idx = x[0] 
             op_history = x[1]
