@@ -8,8 +8,7 @@ Either by a sequencing rule or a set of trained parameters
 import traceback
 import simpy
 import numpy as np
-import torch
-from tabulate import tabulate
+from sequencing_rule import *
 
 
 class Machine:
@@ -43,6 +42,12 @@ class Machine:
         self.m_list = kwargs['machine_list']
         # specify the sequencing decision maker
         self.job_sequencing = kwargs['sqc_rule']
+        # should machine use pre-determined production schedule which allows strategic idleness
+        # or act in a reactive way that always process the queuing job as soon as possible?
+        self.strategic_idle_mode = False
+        if self.job_sequencing.__name__ == "draw_from_schedule":
+            self.strategic_idle_mode = True
+        # activate the produciton
         self.env.process(self.process_production())
 
 
@@ -55,12 +60,26 @@ class Machine:
         while True:
             # record the time of the sequencing decision, used as the index of produciton record in job creator
             self.decision_T = self.env.now
-            # if we have more than one queuing jobs, sequencing is required
-            if len(self.queue) > 1:
-                # the returned value is picked job's position in machine's queue
-                self.sqc_decision_pos = self.job_sequencing(jobs = self.queue, m_idx = self.m_idx)
+            # TYPE I: if strategic idleness is allowed
+            if self.strategic_idle_mode:
+                # the returned value is the first job's index in pre-developed schedule
+                # i.e. the next job that should be processed by this machine
+                _1st_job_in_schedule = self.job_sequencing(m_idx = self.m_idx)
+                # if the job in schedule is NOT in queue, activate the strategic idleness process
+                if _1st_job_in_schedule not in [j.j_idx for j in self.queue]:
+                    yield self.env.process(self.strategic_idle(_1st_job_in_schedule))
+                # when job required is in queue (with ot without strategic idleness)
+                self.sqc_decision_pos = [j.j_idx for j in self.queue].index(_1st_job_in_schedule)
                 self.picked_j_instance = self.queue[self.sqc_decision_pos]
-                self.logger.info("{} >>> SQC on: Machine {} picks Job {}".format(
+                self.logger.info("{} >>> STR.IDL.: Machine {} picks Job {}".format(
+                    self.env.now, self.m_idx, self.picked_j_instance.j_idx))
+            # TYPE II: if sequencing is completely reactive
+            # we have more than one queuing jobs, sequencing is required
+            elif len(self.queue) > 1:
+                # the returned value is picked job's position in machine's queue
+                self.sqc_decision_pos = self.job_sequencing(jobs = self.queue)
+                self.picked_j_instance = self.queue[self.sqc_decision_pos]
+                self.logger.info("{} >>> SQC (Reactive): Machine {} picks Job {}".format(
                     self.env.now, self.m_idx, self.picked_j_instance.j_idx))
             # otherwise simply select the first(only) one
             else:
@@ -70,9 +89,8 @@ class Machine:
                     self.env.now, self.m_idx, self.picked_j_instance.j_idx))
             # update job instance, and get the time of operation
             actual_pt = self.after_decision()
-            self.logger.debug(
-                "{} >>> PT: Job {} on Machine {} proc.t, expected: {}, actual: {}".format(
-                self.env.now, self.picked_j_instance.j_idx, self.m_idx, self.picked_j_instance.remaining_operations[0][1], actual_pt))
+            self.logger.debug("Job {} on Machine {} proc.t, expected: {}, actual: {}".format(
+                self.picked_j_instance.j_idx, self.m_idx, self.picked_j_instance.remaining_operations[0][1], actual_pt))
             # The production process (yield the actual processing time of operation)
             yield self.env.timeout(actual_pt)
             self.logger.info("{} >>> DEP: Job {} departs from Machine {}".format(
@@ -103,6 +121,20 @@ class Machine:
         self.logger.info("{} >>> IDL off: Machine {} replenished".format(self.env.now, self.m_idx))
 
 
+    # when machine decides to wait for a job not yet arrived
+    def strategic_idle(self, _1st_job_in_schedule):
+        self.logger.info("{} >>> STR.IDL. on: Machine {} DE-activated, waiting for Job {}".format(self.env.now, self.m_idx, _1st_job_in_schedule))
+        self.sufficient_stock = self.env.event()
+        while True:
+            yield self.sufficient_stock
+            # then check if the required job has arrived
+            if _1st_job_in_schedule in [j.j_idx for j in self.queue]:
+                self.logger.info("{} >>> STR.IDL. off: Job {} arrived, Machine {} RE-activated".format(self.env.now, _1st_job_in_schedule, self.m_idx))
+                break
+        if not self.working_event.triggered:
+            yield self.env.process(self.breakdown())
+
+
     # or when machine failure happens
     def breakdown(self):
         self.logger.info("{} >>> BKD on: Machine {} is broken".format(self.env.now, self.m_idx))
@@ -119,7 +151,7 @@ class Machine:
         self.queue.append(arriving_job)
         arriving_job.before_operation()
         self.logger.info("{} >>> ARV: Job {} arrived at Machine {}".format(self.env.now, arriving_job.j_idx, self.m_idx))
-        # change the stocking status if machine is currently idle
+        # change the stocking status if machine is currently idle (empty stock or strategic)
         if not self.sufficient_stock.triggered:
             self.sufficient_stock.succeed()
 
@@ -129,9 +161,9 @@ class Machine:
         pass
 
 
-    def after_decision(self):
+    def after_decision(self) -> int:
         # get data of upcoming operation
-        pt = self.picked_j_instance.remaining_operations[0][2] # the actual processing time in this stage, can be different from expected value
+        pt = self.picked_j_instance.actual_remaining_pt[0] # the actual processing time in this stage, can be different from expected value
         wait = self.env.now - self.picked_j_instance.arrival_T # time that job queued before being picked
         # record this decision/operation
         self.picked_j_instance.record_operation(self.m_idx, self.env.now, pt, wait)

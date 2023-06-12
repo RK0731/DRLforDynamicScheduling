@@ -156,8 +156,10 @@ class OPT_scheduler:
                 # optimization process terminates as soon as Gurobi finds no improvements can be obtained
                 model.setObjective(varJobTardiness.sum(), GRB.MINIMIZE)
                 # therefore we use the secondary objective in hierachical optimization
-                # it can only be optimized without degrading the primary objective
-                model.setObjectiveN(expr = varMakespan, index= 1, priority = -1)
+                # it can only be optimized without compromising the primary objective
+                #model.setObjectiveN(expr = varMakespan, index = 1, priority = -1)
+                for j, m in pairJobLastOp:
+                    model.setObjectiveN(varJobCompT[j], index = j+1, priority = -2)
                 # run the optimization
                 model.optimize()
                 '''
@@ -165,16 +167,24 @@ class OPT_scheduler:
                 '''
                 for v in model.getVars():
                     print('%s %g' % (v.VarName, v.X))
-                self.convert_to_schedule(model.getVarByName("varJobCompT"), model.getVarByName("varJobPrec"))
-        # close the environment, release the resource    
+                self.convert_to_schedule(varOpBeginT)
+        # close the environment, release the resource after this cycle
         self.grb_env.close()
 
 
-    def convert_to_schedule(self, varJobCompT, varJobPrec):
-        print(varJobCompT)
-        for x in varJobCompT:
-            print(x)
+    def convert_to_schedule(self, varOpBeginT: gp.tupledict) -> None:
+        # reset the schedule
+        self.schedule = {m.m_idx:[] for m in self.m_list}
+        # reorder the vaOpBeginT (tuple dict), by the value of variable (begin time of operation)
+        _reordered_varOpBeginT: list = sorted(varOpBeginT.items(), key = lambda item: item[1].X)
+        # add job index to respective machine's new schedule
+        for (j ,m), var in _reordered_varOpBeginT:
+            self.schedule[m].append(j)
+        self.logger.info("New schedule (m_idx: [j_idx]): {}".format(self.schedule))
 
 
-    def draw_from_schedule(self, jobs:list, m_idx:int, *args) -> int:
-        pass
+    def draw_from_schedule(self, m_idx:int) -> int:
+        _1st_job_in_schedule = self.schedule[m_idx].pop(0)
+        # returned value is the job index in schedule, not the position of job in queue
+        # as job may not yet arrived
+        return _1st_job_in_schedule
