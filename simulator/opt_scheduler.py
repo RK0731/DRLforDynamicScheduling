@@ -183,8 +183,11 @@ class OPT_scheduler:
         self.logger.info("New schedule (m_idx: [j_idx]): {}".format(self.schedule))
         # and update all machine's status
         for m in self.m_list:
+            # if the machine is currently in strategic idleness status
             if m.strategic_idle == True:
+                # update the next job's index
                 m.next_job_in_schedule = self.schedule[m.m_idx][0]
+                # interrupt current strategic idleness process, and start a new one immediately
                 m.strategic_idle_proc.interrupt('New schedule developed')
                 m.strategic_idle_proc = self.env.process(m.process_strategic_idle())
 
