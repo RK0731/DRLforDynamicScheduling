@@ -50,10 +50,10 @@ class Shopfloor:
 
 
 if __name__ == '__main__':
-    spf = Shopfloor(m_no = 5, span = 50, pt_range = [1,10], due_tightness = 1.5, E_utliz = 0.9,
+    spf = Shopfloor(m_no = 5, span = 100, pt_range = [1,10], due_tightness = 1.4, E_utliz = 0.9,
                     machine_breakdown = False, MTBF = 100, MTTR = 10, random_bkd = True,
                     processing_time_variability = False, pt_cv = 0.1,
-                    draw_gantt = 5, save_gantt = True, seed = 10000,
+                    draw_gantt = 5, save_gantt = True, seed = 1408765,
                     sqc_rule = SQC_rule.FIFO
                     )
     spf.run_simulation()

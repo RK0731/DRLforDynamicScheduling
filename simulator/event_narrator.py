@@ -130,7 +130,7 @@ class Narrator:
                 bkd_t = self.MTTR
             yield self.env.timeout(time_interval)           
             self.m_list[m_idx].working_event = self.env.event()
-            self.logger.debug("{} >>> BKD created, mahcine {} will be down for {}".format(self.env.now, m_idx, bkd_t))
+            self.logger.debug("{} > BKD created, mahcine {} will be down for {}".format(self.env.now, m_idx, bkd_t))
             # if machine is currently running, the breakdown will commence after current operation
             actual_begin = max(self.m_list[m_idx].release_time, self.env.now)
             actual_end = actual_begin + bkd_t
@@ -142,6 +142,9 @@ class Narrator:
 
     
     def post_simulation(self):
+        if len(self.recorder.j_operation_dict) != self.j_idx:
+            msg = "Simulation FAILED, not all jobs have successfully complete their operations"
+            self.logger.error(msg)
         # system configuration
         self.logger.info('Simulation Ended, here is the shopfloor configuration:\n\n{}\n'.format(
             tabulate([["Category", "Number", "Attributes"],
@@ -153,7 +156,7 @@ class Narrator:
         self.logger.info('Performance:\n\n{}\n'.format(
             tabulate([["Category", "value"],
                       ["Cum.Tard.", cum_tard],
-                      ["Avg.Tard.", round(cum_tard / (self.j_idx+1), 2)]],
+                      ["Avg.Tard.", round(cum_tard / (self.j_idx), 2)]],
                       headers="firstrow")))
 
 

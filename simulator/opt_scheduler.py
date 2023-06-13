@@ -51,7 +51,7 @@ class OPT_scheduler:
         for _j_idx, _j_object in self.in_system_jobs.items():
             for _m_idx in _j_object.remaining_machines:
                 self.schedule[_m_idx] = [_j_idx]
-        self.logger.info("{} >>> OPT off: new schedule {} / (sequence of jobs)".format(self.env.now, self.schedule))
+        self.logger.info("{} > OPT off: new schedule {} / (sequence of jobs)".format(self.env.now, self.schedule))
 
 
     # intersection detected, needs optimizaiton
@@ -88,8 +88,6 @@ class OPT_scheduler:
                     pairJobLastOp += [(_j_idx, _traj[-1])]
                 # continuous variables indicating the beginning time of all operations
                 varOpBeginT = model.addVars(pairOpBeginT, vtype=GRB.CONTINUOUS, name="varOpBeginT")
-                self.logger.debug('Operation begin time pairs (j, m)\n{}'.format(pairOpBeginT))
-                self.logger.debug('Job operations sequence pairs [(j, m1), (j, m2)]\n{}'.format(pairOpSqc))
                 # 2. job completion time
                 varJobCompT = model.addVars(list(self.remaining_trajectories.keys()), vtype=GRB.CONTINUOUS, name="varJobCompT")
                 # discrepency of completion time, can be eother earliness or tardiness
@@ -106,7 +104,8 @@ class OPT_scheduler:
                 # binary variable to indicate the precedence between job 1 and job 2 on a machine
                 # equals 0 if job 1 preceeds job 2 on that machine, 1 otherwise
                 varJobPrec = model.addVars(pairJobPrec, vtype=GRB.BINARY, name='varJobPrec')
-                self.logger.debug('Job precedence pairs (j1, j2, m)\n{}'.format(pairJobPrec))
+                self.logger.debug('Operation begin time pairs: {}, Job operations sequence pairs: {}, Job precedence pairs: {}'.format(
+                    len(pairOpBeginT), len(pairOpSqc), len(pairJobPrec)))
                 ''' 
                 PART II: specify the constraints
                 '''
@@ -151,7 +150,7 @@ class OPT_scheduler:
                 PART III: specify the objective of optimization, and run the optimization
                 '''
                 model.update()
-                model.setParam('time_limit', 5)
+                model.setParam('time_limit', 10)
                 # the primary objective of optimization, however, Gurobi can be "lazy"
                 # optimization process terminates as soon as Gurobi finds no improvements can be obtained
                 model.setObjective(varJobTardiness.sum(), GRB.MINIMIZE)
@@ -181,18 +180,24 @@ class OPT_scheduler:
         for (_j_idx , _m_idx), var in _reordered_varOpBeginT:
             self.schedule[_m_idx].append(_j_idx)
         self.logger.info("New schedule (m_idx: [j_idx]): {}".format(self.schedule))
+        self.update_machine_after_optimization()
+
+
+    def update_machine_after_optimization(self):
         # and update all machine's status
         for m in self.m_list:
             # if the machine is currently in strategic idleness status
-            if m.strategic_idle == True:
-                # update the next job's index
+            self.logger.debug("Machine {} schedule before {}".format(m.m_idx, self.schedule[m.m_idx]))
+            if m.status == "strategic_idle":
+                m.next_job_in_schedule = self.schedule[m.m_idx].pop(0)
+            else:
                 m.next_job_in_schedule = self.schedule[m.m_idx][0]
-                # interrupt current strategic idleness process, and start a new one immediately
-                m.strategic_idle_proc.interrupt('New schedule developed')
-                m.strategic_idle_proc = self.env.process(m.process_strategic_idle())
+            self.logger.debug("Machine {} schedule after {}".format(m.m_idx, self.schedule[m.m_idx]))
+            m.update_status_after_new_schedule()
 
 
     def draw_from_schedule(self, m_idx:int) -> int:
+        self.logger.debug("Draw from schedule, Machine {}, current schedule {}, queue {}".format(m_idx, self.schedule[m_idx], [j.j_idx for j in self.m_list[m_idx].queue]))
         next_job_in_schedule = self.schedule[m_idx].pop(0)
         # returned value is the job index in schedule, not the position of job in queue
         # as job may not yet arrived

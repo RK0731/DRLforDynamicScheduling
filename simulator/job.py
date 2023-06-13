@@ -44,7 +44,7 @@ class Job:
         self.due = np.round(self.pt_by_m_idx.sum() * np.random.uniform(1.2, self.due_tightness) + self.env.now)        
         # data recording
         self.operation_record = []
-        self.logger.info("{} >>> JOB {} created, trajectory: {}, exp.pt: {}, actual pt: {}, due: {}".format(
+        self.logger.info("{} > JOB {} created, trajectory: {}, exp.pt: {}, actual pt: {}, due: {}".format(
             self.env.now, self.j_idx, self.trajectory, self.remaining_pt, self.actual_remaining_pt, self.due))
 
 
@@ -56,7 +56,6 @@ class Job:
     def after_operation(self, *args):
         # if job is not completed
         if len(self.remaining_operations) > 1:
-            self.logger.debug('Job {} is tagged as "queuing"'.format(self.j_idx))
             self.status = "queuing"
             # pop current operation tuple
             self.remaining_operations.pop(0)
@@ -84,5 +83,5 @@ class Job:
         self.recorder.j_tardiness_dict[self.j_idx] = max(0, self.env.now - self.due)
         self.recorder.j_flowtime_dict[self.j_idx] = self.env.now - self.creation_T
         self.recorder.in_system_jobs.pop(self.j_idx)
-        self.logger.info("{} >>> JOB {} completed".format(self.env.now, self.j_idx))
+        self.logger.info("{} > JOB {} completed".format(self.env.now, self.j_idx))
         self.tardiness = self.env.now - self.due
