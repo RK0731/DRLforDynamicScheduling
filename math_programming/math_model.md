@@ -7,21 +7,21 @@ $j \in J : \text{Index of job}$
 
 ### 2. Set
 
-$I_{j}^{j'} \subset J : \text{A set of machines that job } j \text{ and } j' \text{ both need to visit}$\
-$T_{j} = \{m_1, m_2, ..., m_{\mid T_{j}\mid} \} : \text{Trajectory, an ordered set containing machine indices that job } j \text{ needs to visit}$\
-$A_{j}^{m} \subset M : \text{A set of machines that job } j \text{ needs to visit after visiting machine } m$
+$ I_{j}^{j'} \subset J : \text{A set of machines that job } j \text{ and } j' \text{ both need to visit}$\
+$ T_{j} = \{m_1, m_2, ..., m_{\mid T_{j}\mid} \} : \text{Trajectory, an ordered set containing machine indices that job } j \text{ needs to visit}$\
+$ A_{j}^{m} \subset M : \text{A set of machines that job } j \text{ needs to visit after visiting machine } m$
 
 ### 3. Paremeters
 
-$t_{jm} : \text{Expected processing time of job } j \text{ on machine } m $\
-$d_{j} : \text{Due time of job } j $\
-$r_{m} : \text{Release time of machine } m \text{, the expected time that machine complete current operation or restore from breakdown}$
+$ t_{jm} : \text{Expected processing time of job } j \text{ on machine } m $\
+$ d_{j} : \text{Due time of job } j $\
+$ r_{m} : \text{Release time of machine } m \text{, the expected time that machine complete current operation or restore from breakdown}$
 
 ### 4. Decision Variables
 
-$b_{jm} : \text{Operation begin time variable} \text{, time that job } j \text{ started to be processed on machine } m $\
-$c_{j} : \text{Completion time of job } j $\
-$p_{jj'm} : \text{Precedence variable} \text{, equals 0 if job } j \text{ is processed on machine } m \text{ before job } j' $
+$ b_{jm} : \text{Operation begin time variable} \text{, time that job } j \text{ started to be processed on machine } m$\
+$ c_{j} : \text{Completion time of job } j $\
+$ p_{jj'm} : \text{Precedence variable} \text{, equals 0 if job } j \text{ is processed on machine } m \text{ before job } j' $
 
 ### 5. Objective and Constraints
 $\text{Objectives (decending by priority in hierarchical optimization):} $
