@@ -5,7 +5,7 @@ The machine/sequencing agent would pick one job from its queue for the next oper
 Either by a sequencing rule or a set of trained parameters
 '''
 
-from typing import Literal
+from typing import Optional, Union, Literal, Any
 import simpy
 import numpy as np
 from sequencing_rule import *
@@ -149,15 +149,17 @@ class Machine:
     def job_arrival(self, arriving_job: object):
         # add the job instance to queue
         self.queue.append(arriving_job)
-        arriving_job.before_operation()
-        self.logger.info("{} > ARV: Job {} arrived at Machine {}".format(self.env.now, arriving_job.j_idx, self.m_idx))
+        arriving_job.after_arrival()
         # change the stocking status if machine is currently idle (empty stock or strategic)
         if not self.sufficient_stock.triggered:
             self.sufficient_stock.succeed()
         # if schedule mdoe is ON, need to check if arrived job match the required job, to reactivate machine from idleness
         if self.schedule_mode:
-            self.logger.debug('Machine {}, {}, {}{}'.format(self.m_idx, self.status, self.next_job_in_schedule, [j.j_idx for j in self.queue]))
             self.update_status_after_job_arrival(arriving_job.j_idx)
+        common_msg = "{} > ARV: Job {} arrived at Machine {}, current status: {}, queue: {}".format(
+            self.env.now, arriving_job.j_idx, self.m_idx, self.status, [j.j_idx for j in self.queue])
+        extra_msg = ", next job in schedule: {}".format(self.next_job_in_schedule)
+        self.logger.info(common_msg + extra_msg if self.schedule_mode else common_msg)
 
 
     def check_status(self):
@@ -167,27 +169,24 @@ class Machine:
                 self.required_job_in_queue_event.succeed() 
         # otherwise need to wait for the arrival of required job
         else:
-            self.status = "strategic_idle"
+            self.status = "strategic_idle" # and change the status
             self.logger.info("{} > STR.IDL. on: Machine {} SUSPENDED, waiting for Job {}, current queue: {}".format(
                 self.env.now, self.m_idx, self.next_job_in_schedule, [j.j_idx for j in self.queue]))
             self.required_job_in_queue_event = self.env.event()
 
 
     def update_status_after_new_schedule(self):
+        # after change the [next_job_in_schedule], check the match again
         if self.next_job_in_schedule in [j.j_idx for j in self.queue]:
             if not self.required_job_in_queue_event.triggered:
                 self.required_job_in_queue_event.succeed() 
        
 
     def update_status_after_job_arrival(self, _arriving_job_idx):
+        # check if arriving job match the [next_job_in_schedule]
         if _arriving_job_idx == self.next_job_in_schedule:
             if not self.required_job_in_queue_event.triggered:
                 self.required_job_in_queue_event.succeed()
-
-
-    # update information that will be used for calculating the rewards
-    def before_operation(self):
-        pass
 
 
     def after_decision(self) -> int:
@@ -195,10 +194,8 @@ class Machine:
         pt = self.picked_j_instance.actual_remaining_pt[0] # the actual processing time in this stage, can be different from expected value
         wait = self.env.now - self.picked_j_instance.arrival_T # time that job queued before being picked
         # record this decision/operation
-        self.picked_j_instance.record_operation(self.m_idx, self.env.now, pt, wait)
-        self.picked_j_instance.status = 'processing'
+        self.picked_j_instance.after_decision(self.m_idx, self.env.now, pt, wait)
         # update status of picked job and machine
-        self.picked_j_instance.available_T = self.env.now + pt
         self.release_T = self.env.now + pt
         self.cumulative_runtime += pt
         self.current_job = self.picked_j_instance.j_idx

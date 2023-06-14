@@ -109,7 +109,7 @@ class Narrator:
             self.recorder.in_system_jobs[self.j_idx] = job_instance
             # build a new schedule if optimization mode is on
             if self.opt_mode:
-                self.logger.debug("New job arrived, call central scheduler to build schedule")
+                self.logger.debug("New job arrived, call central scheduler to build schedule\n"+"-"*88)
                 self.central_scheduler.solve_problem()
             # after creating a job, assign it to the first machine along its trajectory
             first_m = trajectory_seed[0]
@@ -142,22 +142,41 @@ class Narrator:
 
     
     def post_simulation(self):
+        # compare the number of completed job and created job
         if len(self.recorder.j_operation_dict) != self.j_idx:
             msg = "Simulation FAILED, not all jobs have successfully complete their operations"
             self.logger.error(msg)
+        # compare each operation in schedule and execution
+        # mismatch doesn't mean simulation failed, but indicate likely "under-optimization"
+        # only meaningful when processing time variablity is none
+        if self.opt_mode and self.pt_cv == 0:
+            _mismatch = {}
+            for _j_idx, ops in self.central_scheduler.j_op_by_schedule.items():
+                compare = zip(ops, self.recorder.j_operation_dict[_j_idx][-len(ops):])
+                for E, A in compare:
+                    if E[1]!=A[1]: 
+                        try:
+                            _mismatch[_j_idx].append("M{}, ET:{}, AT:{}".format(E[0], E[1], A[1]))
+                        except:
+                            _mismatch[_j_idx] = ["M{}, ET:{}, AT:{}".format(E[0], E[1], A[1])]
+        if len(_mismatch): 
+            self.logger.warning("Schedule and execution MISMATCH!:\n{}".format(
+                tabulate([["Job", "Mismatch"],
+                          *[[_j_idx, description] for _j_idx, description in _mismatch.items()]],
+                        headers="firstrow", tablefmt="psql")))
         # system configuration
-        self.logger.info('Simulation Ended, here is the shopfloor configuration:\n\n{}\n'.format(
+        self.logger.info('Simulation Ended, here is the shopfloor configuration:\n{}'.format(
             tabulate([["Category", "Number", "Attributes"],
                       ["Machine", self.m_no, "(1) Machine Breakdown: {}; (2) Random bkd: {}".format(self.kwargs['machine_breakdown'], self.kwargs['random_bkd'])],
                       ["Job", self.j_idx, "(1) pt range: {}; (2) pt cv: {}".format(self.pt_range, self.pt_cv)]],
-                      headers="firstrow")))
+                      headers="firstrow", tablefmt="psql")))
         # performance
         cum_tard = sum(self.recorder.j_tardiness_dict.values())
-        self.logger.info('Performance:\n\n{}\n'.format(
+        self.logger.info('Performance:\n{}'.format(
             tabulate([["Category", "value"],
                       ["Cum.Tard.", cum_tard],
                       ["Avg.Tard.", round(cum_tard / (self.j_idx), 2)]],
-                      headers="firstrow")))
+                      headers="firstrow", tablefmt="psql")))
 
 
     def build_sqc_experience_repository(self, m_list): # build two dictionaries

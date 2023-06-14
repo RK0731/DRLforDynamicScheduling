@@ -3,11 +3,11 @@
     "disable_existing_loggers": true,
     "formatters": {
       "precise": {
-        "format": "%(asctime)s [%(module)+13s: %(lineno)-3d] %(levelname)-5s >>> %(message)s",
+        "format": "%(asctime)s [%(module)+13s: %(lineno)-3d] %(levelname)-5s => %(message)s",
         "datefmt": "%H:%M:%S"
       },
       "brief": {
-        "format": "[%(module)+13s: %(lineno)-3d] %(levelname)-5s >>> %(message)s",
+        "format": "[%(module)+13s: %(lineno)-3d] %(levelname)-5s => %(message)s",
         "datefmt": "%Y-%m-%d %H:%M:%S"
       }    
     },

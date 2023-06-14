@@ -1,4 +1,6 @@
 import itertools
+import time
+from tabulate import tabulate
 import pandas as pd
 import numpy as np
 from pathlib import Path
@@ -9,6 +11,7 @@ class OPT_scheduler:
     def __init__(self, *args, **kwargs):
         for k, v in kwargs.items():
             setattr(self, k, v)
+        self.grb_msg = {2:'optimal', 3:'infeasible', 4:'infeasible or unbounded', 9:'time limit', 11:'interrupted'}
         self.schedule = {m.m_idx:[] for m in self.m_list}
         self.in_system_jobs = self.recorder.in_system_jobs
         # overwrite the gurobi log file
@@ -51,11 +54,12 @@ class OPT_scheduler:
         for _j_idx, _j_object in self.in_system_jobs.items():
             for _m_idx in _j_object.remaining_machines:
                 self.schedule[_m_idx] = [_j_idx]
-        self.logger.info("{} > OPT off: new schedule {} / (sequence of jobs)".format(self.env.now, self.schedule))
+        self.logger.info("{} > OPT off: new schedule {} / (sequence of jobs)\n".format(self.env.now, self.schedule)+"-"*88)
 
 
     # intersection detected, needs optimizaiton
     def solve_by_optimization(self):
+        _opt_start = time.time()
         # get machines' release info
         self.machine_release_T = {
             m.m_idx: max(m.release_T, self.env.now) for m in self.m_list}
@@ -104,8 +108,8 @@ class OPT_scheduler:
                 # binary variable to indicate the precedence between job 1 and job 2 on a machine
                 # equals 0 if job 1 preceeds job 2 on that machine, 1 otherwise
                 varJobPrec = model.addVars(pairJobPrec, vtype=GRB.BINARY, name='varJobPrec')
-                self.logger.debug('Operation begin time pairs: {}, Job operations sequence pairs: {}, Job precedence pairs: {}'.format(
-                    len(pairOpBeginT), len(pairOpSqc), len(pairJobPrec)))
+                self.logger.debug('Job in system: {}, Operation begin time pairs: {}, Job operations sequence pairs: {}, Job precedence pairs: {}'.format(
+                    len(self.in_system_jobs), len(pairOpBeginT), len(pairOpSqc), len(pairJobPrec)))
                 ''' 
                 PART II: specify the constraints
                 '''
@@ -156,16 +160,17 @@ class OPT_scheduler:
                 model.setObjective(varJobTardiness.sum(), GRB.MINIMIZE)
                 # therefore we use the secondary objective in hierachical optimization
                 # it can only be optimized without compromising the primary objective
-                #model.setObjectiveN(expr = varMakespan, index = 1, priority = -1)
+                model.setObjectiveN(expr = varMakespan, index = 1, priority = -1)
+                # and an extra push
                 for j, m in pairJobLastOp:
-                    model.setObjectiveN(expr = varJobCompT[j], index = j+1, priority = -2)
+                    model.setObjectiveN(expr = varJobCompT[j], index = j+2, priority = -2)
                 # run the optimization
                 model.optimize()
                 '''
                 PART IV: convert the result to valid schedule
                 '''
-                for v in model.getVars():
-                    print('%s %g' % (v.VarName, v.X))
+                self.logger.debug("Optimization elapsed, model status: {}, time expense: {}s".format(
+                    self.grb_msg[model.status], round(time.time() - _opt_start,3)))
                 self.convert_to_schedule(varOpBeginT)
         # close the environment, release the resource after this cycle
         self.grb_env.close()
@@ -174,25 +179,35 @@ class OPT_scheduler:
     def convert_to_schedule(self, varOpBeginT: gp.tupledict) -> None:
         # reset the schedule
         self.schedule = {m.m_idx:[] for m in self.m_list}
+        self.j_op_by_schedule = {_j_idx:[] for _j_idx in self.remaining_trajectories.keys()}
         # reorder the vaOpBeginT (tuple dict), by the value of variable (begin time of operation)
         _reordered_varOpBeginT: list = sorted(varOpBeginT.items(), key = lambda item: item[1].X)
-        # add job index to respective machine's new schedule
         for (_j_idx , _m_idx), var in _reordered_varOpBeginT:
+            # add job index to respective machine's new schedule
             self.schedule[_m_idx].append(_j_idx)
-        self.logger.info("New schedule (m_idx: [j_idx]): {}".format(self.schedule))
+            # job's expected operation begin time in schedule
+            self.j_op_by_schedule[_j_idx].append((_m_idx, round(var.X, 1)))
+        self.logger.info("New schedule (m_idx: [j_idx]): \n{}".format(self.schedule))
+        self.logger.debug("New jobs' operation in new schedule: \n{}".format(
+            tabulate([["Job", "Operations (m_idx, opBeginT)"],
+                      *[[_j_idx, op] for _j_idx, op in self.j_op_by_schedule.items()]],
+                      headers="firstrow", tablefmt="psql")))
         self.update_machine_after_optimization()
 
 
+    # update the job index that all machines should wait for
     def update_machine_after_optimization(self):
-        # and update all machine's status
         for m in self.m_list:
-            # if the machine is currently in strategic idleness status
-            self.logger.debug("Machine {} schedule before {}".format(m.m_idx, self.schedule[m.m_idx]))
+            #self.logger.debug("Machine {} schedule before {}".format(m.m_idx, self.schedule[m.m_idx]))
             if m.status == "strategic_idle":
+                # if the machine is currently in strategic idleness status
+                # need to pop from schedule because the sequencing decision is considered made
                 m.next_job_in_schedule = self.schedule[m.m_idx].pop(0)
             else:
+                # otherwise (idle, down or processing) just copy the job index
+                # later the machine will call [draw_from_schedule] function to pop from schedule
                 m.next_job_in_schedule = self.schedule[m.m_idx][0]
-            self.logger.debug("Machine {} schedule after {}".format(m.m_idx, self.schedule[m.m_idx]))
+            #self.logger.debug("Machine {} schedule after {}".format(m.m_idx, self.schedule[m.m_idx]))
             m.update_status_after_new_schedule()
 
 

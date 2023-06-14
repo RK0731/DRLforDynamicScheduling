@@ -48,8 +48,16 @@ class Job:
             self.env.now, self.j_idx, self.trajectory, self.remaining_pt, self.actual_remaining_pt, self.due))
 
 
-    def before_operation(self):
+    def after_arrival(self):
         self.arrival_T = self.env.now
+
+
+    # after the job is picked for processing
+    def after_decision(self, m_idx, opBeginT, pt, wait):
+        self.record_operation(m_idx, opBeginT, pt, wait)
+        # update status
+        self.status = 'processing'
+        self.available_T = self.env.now + pt
 
 
     # update the information, get ready for transfer or exit
