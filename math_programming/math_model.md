@@ -19,7 +19,7 @@ $r_{m} : \text{Release time of machine } m \text{, the expected time that machin
 
 ### 4. Decision Variables
 
-${b}_{jm} : \text{Time that job } j \text{ started to be processed on machine } m$\
+$b_{jm} : \text{Time that job } j \text{ started to be processed on machine } m$\
 $c_{j} : \text{Completion time of job } j $\
 $p_{jj'm} : \text{Precedence variable, equals 0 if job } j \text{ is processed on machine } m \text{ before job } j' $
 
