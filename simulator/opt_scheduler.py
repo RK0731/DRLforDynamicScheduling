@@ -124,9 +124,9 @@ class OPT_scheduler:
                     (varOpBeginT[j, m1] + self.in_system_jobs[j].pt_by_m_idx[m1] <= varOpBeginT[j, m2] for (j,m1), (j,m2) in pairOpSqc),
                     name = 'constrOpSqc')
                 # 2. job cannot be processed bafore required machine is released or itself became available
-                # 2.1 job's first operation can be processed only after machine release
+                # 2.1 job's all operations can be processed only after machine release
                 constrMachineRelease = model.addConstrs(
-                    (varOpBeginT[j, m] >= self.machine_release_T[m] for j, m in pairJobFirstOp),
+                    (varOpBeginT[j, m] >= self.machine_release_T[m] for j, m in pairOpBeginT),
                     name = 'constrMachineRelease')
                 # 2.2 job's first operation can be processed only itself becomes available
                 constrJobAvailable = model.addConstrs(
@@ -206,7 +206,6 @@ class OPT_scheduler:
         for m in self.m_list:
             if not self.schedule[m.m_idx]:
                 continue
-            self.logger.info("M{}: {}".format(m.m_idx, self.schedule[m.m_idx]))
             #self.logger.debug("Machine {} schedule before {}".format(m.m_idx, self.schedule[m.m_idx]))
             if m.status == "strategic_idle":
                 # if the machine is currently in strategic idleness status
