@@ -18,7 +18,7 @@ class Machine:
             setattr(self, k, v)
         # the time that agent make current and next decision
         self.decision_T = 0
-        self.release_T = 0
+        self.release_T = self.hidden_release_T = 0
         self.current_job = None
         self.status: Literal["idle", "processing", "strategic_idle", "down"] = "idle"
         self.next_job_in_schedule = -1
@@ -131,7 +131,7 @@ class Machine:
         yield self.sufficient_stock
         # examine whether the scheduled shutdown is triggered
         if not self.working_event.triggered:
-            yield self.env.process(self.breakdown())
+            yield self.env.process(self.process_breakdown())
         self.logger.info("{} > IDL off: Machine {} replenished".format(self.env.now, self.m_idx))
 
 
@@ -156,7 +156,7 @@ class Machine:
         # if schedule mdoe is ON, need to check if arrived job match the required job, to reactivate machine from idleness
         if self.schedule_mode:
             self.update_status_after_job_arrival(arriving_job.j_idx)
-        common_msg = "{} > ARV: Job {} arrived at Machine {}, current status: {}, queue: {}".format(
+        common_msg = "{} > ARV: Job {} arrived at Machine {}, current status {}, queue: {}".format(
             self.env.now, arriving_job.j_idx, self.m_idx, self.status, [j.j_idx for j in self.queue])
         extra_msg = ", next job in schedule: {}".format(self.next_job_in_schedule)
         self.logger.info(common_msg + extra_msg if self.schedule_mode else common_msg)
@@ -191,15 +191,17 @@ class Machine:
 
     def after_decision(self) -> int:
         # get data of upcoming operation
-        pt = self.picked_j_instance.actual_remaining_pt[0] # the actual processing time in this stage, can be different from expected value
+        expected_pt = self.picked_j_instance.remaining_pt[0] # the expected processing time
+        actual_pt = self.picked_j_instance.actual_remaining_pt[0] # the actual processing time in this stage, can be different from expected value
         wait = self.env.now - self.picked_j_instance.arrival_T # time that job queued before being picked
         # record this decision/operation
-        self.picked_j_instance.after_decision(self.m_idx, self.env.now, pt, wait)
+        self.picked_j_instance.after_decision(self.m_idx, wait)
         # update status of picked job and machine
-        self.release_T = self.env.now + pt
-        self.cumulative_runtime += pt
+        self.release_T = self.env.now + expected_pt
+        self.hidden_release_T = self.env.now + actual_pt # invisible to decision maker
+        self.cumulative_runtime += actual_pt
         self.current_job = self.picked_j_instance.j_idx
-        return pt
+        return actual_pt
 
 
     def after_operation(self):

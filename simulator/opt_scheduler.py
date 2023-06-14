@@ -52,7 +52,13 @@ class OPT_scheduler:
     # no intersection between jobs, no optimization 
     def solve_without_optimization(self):
         for _j_idx, _j_object in self.in_system_jobs.items():
-            for _m_idx in _j_object.remaining_machines:
+            if _j_object.status == "queuing":
+                _j_traj = _j_object.remaining_machines
+            elif len(_j_object.remaining_machines) > 1:
+                _j_traj = _j_object.remaining_machines[1:]
+            else:
+                continue
+            for _m_idx in _j_traj:
                 self.schedule[_m_idx] = [_j_idx]
         self.logger.info("{} > OPT off: new schedule {} / (sequence of jobs)\n".format(self.env.now, self.schedule)+"-"*88)
 
@@ -198,6 +204,9 @@ class OPT_scheduler:
     # update the job index that all machines should wait for
     def update_machine_after_optimization(self):
         for m in self.m_list:
+            if not self.schedule[m.m_idx]:
+                continue
+            self.logger.info("M{}: {}".format(m.m_idx, self.schedule[m.m_idx]))
             #self.logger.debug("Machine {} schedule before {}".format(m.m_idx, self.schedule[m.m_idx]))
             if m.status == "strategic_idle":
                 # if the machine is currently in strategic idleness status

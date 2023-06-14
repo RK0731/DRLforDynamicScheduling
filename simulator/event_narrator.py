@@ -76,7 +76,7 @@ class Narrator:
         '''
         if self.machine_breakdown == True:
             for m_idx, m in enumerate(self.m_list):
-                self.env.process(self.process_machine_breakdown(m_idx, kwargs['random_bkd']))
+                self.env.process(self.process_machine_breakdown(m_idx, self.random_MTBF, self.random_MTTR))
             self.logger.debug("Machine breakdown mode is ON, MTBF: [{}], MTTR: [{}]".format(self.MTBF, self.MTTR))
         '''
         3. Optional part II: processing time variablity
@@ -119,22 +119,31 @@ class Narrator:
 
 
     # periodicall disable machines
-    def process_machine_breakdown(self, m_idx:int, random_bkd:bool):
+    def process_machine_breakdown(self, m_idx:int, random_MTBF:bool, random_MTTR:bool):
         while self.env.now < self.span:
-            # draw the time interval between two break downs
-            if random_bkd:
+            # draw the time interval between two break downs and the down time
+            if random_MTBF:
                 time_interval = np.around(np.random.exponential(self.MTBF), decimals = 1)
-                bkd_t = np.around(np.random.uniform(self.MTTR*0.5, self.MTTR*1.5), decimals = 1)
             else:
                 time_interval = self.MTBF
+            if random_MTTR:
+                bkd_t = np.around(np.random.uniform(self.MTTR*0.5, self.MTTR*1.5), decimals = 1)
+            else:
                 bkd_t = self.MTTR
-            yield self.env.timeout(time_interval)           
-            self.m_list[m_idx].working_event = self.env.event()
-            self.logger.debug("{} > BKD created, mahcine {} will be down for {}".format(self.env.now, m_idx, bkd_t))
             # if machine is currently running, the breakdown will commence after current operation
-            actual_begin = max(self.m_list[m_idx].release_time, self.env.now)
+            # but get the actual beging and end time first
+            yield self.env.timeout(time_interval)
+            actual_begin = max(self.m_list[m_idx].hidden_release_T, self.env.now)
             actual_end = actual_begin + bkd_t
-            self.m_list[m_idx].release_time = actual_begin + self.MTTR
+            # then when we arrive at the actual breakdown time
+            yield self.env.timeout(actual_begin - self.env.now)
+            self.m_list[m_idx].working_event = self.env.event()
+            self.logger.debug("{} > BKD: mahcine {} will be down for {}".format(self.env.now, m_idx, bkd_t))
+            # summation of actual begin time and expected down time (MTTR)
+            self.m_list[m_idx].release_T = actual_begin + self.MTTR
+            if self.opt_mode:
+                self.logger.debug("Machine breakdown, call central scheduler to rebuild schedule\n"+"-"*88)
+                self.central_scheduler.solve_problem()
             # time of breakdown
             yield self.env.timeout(actual_end - self.env.now)
             self.recorder.m_bkd_dict[m_idx].append([actual_begin, actual_end])
@@ -152,6 +161,7 @@ class Narrator:
         if self.opt_mode and self.pt_cv == 0:
             _mismatch = {}
             for _j_idx, ops in self.central_scheduler.j_op_by_schedule.items():
+                print(_j_idx, ops)
                 compare = zip(ops, self.recorder.j_operation_dict[_j_idx][-len(ops):])
                 for E, A in compare:
                     if E[1]!=A[1]: 
@@ -159,16 +169,21 @@ class Narrator:
                             _mismatch[_j_idx].append("M{}, ET:{}, AT:{}".format(E[0], E[1], A[1]))
                         except:
                             _mismatch[_j_idx] = ["M{}, ET:{}, AT:{}".format(E[0], E[1], A[1])]
-        if len(_mismatch): 
-            self.logger.warning("Schedule and execution MISMATCH!:\n{}".format(
-                tabulate([["Job", "Mismatch"],
-                          *[[_j_idx, description] for _j_idx, description in _mismatch.items()]],
-                        headers="firstrow", tablefmt="psql")))
-        # system configuration
+            if len(_mismatch): 
+                self.logger.warning("Schedule and execution MISMATCH!:\n{}".format(
+                    tabulate([["Job", "Mismatch"],
+                            *[[_j_idx, description] for _j_idx, description in _mismatch.items()]],
+                            headers="firstrow", tablefmt="psql")))
+        # system configurations to be printed in console
+        header = ["Category", "Number", "Attributes"]
+        if self.machine_breakdown:
+            m_config = ["Machine", self.m_no] + ["Machine Breakdown: {}\nMTBF: {}, random: {}\nMTTR: {}, random : {}".format(
+                self.machine_breakdown, self.MTBF, self.random_MTBF, self.MTTR, self.random_MTTR)]
+        else:
+            m_config = ["Machine", self.m_no, "Machine Breakdown: False"]
+        j_config = ["Job", self.j_idx, "pt range: {}\npt cv: {}".format(self.pt_range, self.pt_cv)]
         self.logger.info('Simulation Ended, here is the shopfloor configuration:\n{}'.format(
-            tabulate([["Category", "Number", "Attributes"],
-                      ["Machine", self.m_no, "(1) Machine Breakdown: {}; (2) Random bkd: {}".format(self.kwargs['machine_breakdown'], self.kwargs['random_bkd'])],
-                      ["Job", self.j_idx, "(1) pt range: {}; (2) pt cv: {}".format(self.pt_range, self.pt_cv)]],
+            tabulate([header, m_config, j_config],
                       headers="firstrow", tablefmt="psql")))
         # performance
         cum_tard = sum(self.recorder.j_tardiness_dict.values())

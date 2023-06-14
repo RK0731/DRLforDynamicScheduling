@@ -53,11 +53,13 @@ class Job:
 
 
     # after the job is picked for processing
-    def after_decision(self, m_idx, opBeginT, pt, wait):
-        self.record_operation(m_idx, opBeginT, pt, wait)
+    def after_decision(self, m_idx, wait):
+        # the information recorded would use actual value, NOT expected value
+        self.record_operation(m_idx, self.env.now, self.actual_remaining_pt[0], wait)
         # update status
         self.status = 'processing'
-        self.available_T = self.env.now + pt
+        # the expected availabe time
+        self.available_T = self.env.now + self.remaining_pt[0]
 
 
     # update the information, get ready for transfer or exit
