@@ -12,6 +12,7 @@ class Job:
     env: Any
     logger: Any
     recorder: Any
+    rng: np.random.default_rng
     j_idx: int
     trajectory: np.array
     pt_by_m_idx: np.array
@@ -34,14 +35,14 @@ class Job:
             self.actual_remaining_pt = list(_pt_by_ops) # a stack of actual processing time, equals expected pt
         else:
             self.remaining_pt = list(_pt_by_ops)
-            _actual_pt = np.around(np.random.normal(_pt_by_ops, _pt_by_ops*self.pt_cv), decimals=1).clip(*self.pt_range)
+            _actual_pt = np.around(self.rng.normal(_pt_by_ops, _pt_by_ops*self.pt_cv), decimals=1).clip(*self.pt_range)
             self.actual_remaining_pt = list(_actual_pt) # a stack of actual processing time, different from expected pt
         # a stack of machine indices
         self.remaining_machines = list(self.trajectory) # a stack of machine index that job needs to visit
         # zip remaining machines, expected pt, and actual pt
         self.remaining_operations = list(zip(self.remaining_machines, self.remaining_pt, self.actual_remaining_pt))
         # produce due date for job, which is proportional to the total processing time
-        self.due = np.round(self.pt_by_m_idx.sum() * np.random.uniform(1.2, self.due_tightness) + self.env.now)        
+        self.due = np.round(self.pt_by_m_idx.sum() * self.rng.uniform(1.2, self.due_tightness) + self.env.now)
         # data recording
         self.operation_record = []
         self.logger.info("{} > JOB {} created, trajectory: {}, exp.pt: {}, actual pt: {}, due: {}".format(

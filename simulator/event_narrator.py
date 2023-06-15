@@ -18,12 +18,13 @@ class Narrator:
             setattr(self, k, v)
         self.kwargs = kwargs
         self.logger.debug("Event narrator created")
-        # look for random seed
+        # specify the random seed
         if 'seed' in kwargs:
-            np.random.seed(kwargs['seed'])
             self.logger.debug("Random seed is specified, seed: {}".format(kwargs['seed']))
         else:
-            self.logger.warning("Random seed is not specified, do this only for training!")
+            self.seed = np.random.randint(0, 1e10)
+            self.logger.warning("Random seed is not specified, generated seed: {}, do this only for training!".format(self.seed))
+        self.rng = np.random.default_rng(seed = self.seed)
         '''
         1.1 Core components: machines and dynamic job arrivals
         '''
@@ -40,7 +41,7 @@ class Narrator:
         # number of new jobs arrive within simulation, with 10% extra jobs as buffer
         self.total_no = np.round(1.1*self.span/_beta).astype(int)
         # the interval between job arrivals by exponential distribution
-        self.arrival_interval = np.random.exponential(_beta, self.total_no).round()
+        self.arrival_interval = self.rng.exponential(_beta, self.total_no).round()
         # process the job arrival function
         self.env.process(self.process_job_creation())
         ''' 
@@ -97,12 +98,12 @@ class Narrator:
             time_interval = self.arrival_interval[self.j_idx]
             yield self.env.timeout(time_interval)
             # produce the trajectory of job, by shuffling the sequence seed
-            np.random.shuffle(trajectory_seed)
+            self.rng.shuffle(trajectory_seed)
             # randomly a produce processing time array of job, this is THEORATICAL value, not actual value if variance exists
-            ptl = np.random.randint(self.pt_range[0], self.pt_range[1]+1, size = [self.m_no])
+            ptl = self.rng.integers(low = self.pt_range[0], high = self.pt_range[1]+1, size = [self.m_no])
             # new job instance
             job_instance = Job(
-                env = self.env, logger = self.logger, recorder = self.recorder,
+                env = self.env, logger = self.logger, recorder = self.recorder, rng = self.rng,
                 j_idx = self.j_idx, trajectory = trajectory_seed.copy(), pt_by_m_idx = ptl.copy(),
                 pt_range = self.pt_range, pt_cv = self.pt_cv, due_tightness = self.due_tightness)
             # track thjis job
@@ -123,11 +124,11 @@ class Narrator:
         while self.env.now < self.span:
             # draw the time interval between two break downs and the down time
             if random_MTBF:
-                time_interval = np.around(np.random.exponential(self.MTBF), decimals = 1)
+                time_interval = np.around(self.rng.exponential(self.MTBF), decimals = 1)
             else:
                 time_interval = self.MTBF
             if random_MTTR:
-                bkd_t = np.around(np.random.uniform(self.MTTR*0.5, self.MTTR*1.5), decimals = 1)
+                bkd_t = np.around(self.rng.uniform(self.MTTR*0.5, self.MTTR*1.5), decimals = 1)
             else:
                 bkd_t = self.MTTR
             # if machine is currently running, the breakdown will commence after current operation
@@ -174,16 +175,22 @@ class Narrator:
                     tabulate([["Job", "Mismatch"],
                             *[[_j_idx, description] for _j_idx, description in _mismatch.items()]],
                             headers="firstrow", tablefmt="psql")))
-        # system configurations to be printed in console
+        # simulation configurations to be printed in console
         header = ["Category", "Number", "Attributes"]
+        # machine breakdown info
         if self.machine_breakdown:
             m_config = ["Machine", self.m_no] + ["Machine Breakdown: {}\nMTBF: {}, random: {}\nMTTR: {}, random : {}".format(
                 self.machine_breakdown, self.MTBF, self.random_MTBF, self.MTTR, self.random_MTTR)]
         else:
             m_config = ["Machine", self.m_no, "Machine Breakdown: False"]
-        j_config = ["Job", self.j_idx, "pt range: {}\npt cv: {}\ndue tightness: {}".format(self.pt_range, self.pt_cv, self.due_tightness)]
+        # job info
+        if self.processing_time_variability and self.pt_cv > 0:
+            j_config = ["Job", self.j_idx, "pt range: {}\npt cv: {}\ndue tightness: {}".format(self.pt_range, self.pt_cv, self.due_tightness)]
+        else:
+            j_config = ["Job", self.j_idx, "pt range: {}, deterministic\ndue tightness: {}".format(self.pt_range, self.due_tightness)]            
+        # others
         sqc_config = ['Sqc', "N.A.", self.sqc_rule.__name__]
-        sim_config = ["Sim", "N.A.", "Span: {}\nUtilization: {}%\nRandom seed: {}".format(self.span, self.E_utliz*100, np.random.get_state()[1][0])]
+        sim_config = ["Sim", "N.A.", "Span: {}\nUtilization: {}%\nRandom seed: {}/{}".format(self.span, self.E_utliz*100, self.seed, self.rng)]
         self.logger.info('Simulation Ended, here is the simulation configuration:\n{}'.format(
             tabulate([header, m_config, j_config, sqc_config, sim_config],
                       headers="firstrow", tablefmt="grid")))
