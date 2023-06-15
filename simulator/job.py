@@ -20,7 +20,7 @@ class Job:
     due_tightness: float
     status: Literal["queuing", "processing", "completed"] = "queuing"
     transfer_t: float = 0
-
+ 
 
     # create additional features
     def __post_init__(self):

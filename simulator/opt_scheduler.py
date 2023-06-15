@@ -67,11 +67,9 @@ class OPT_scheduler:
     def solve_by_optimization(self):
         _opt_start = time.time()
         # get machines' release info
-        self.machine_release_T = {
-            m.m_idx: max(m.release_T, self.env.now) for m in self.m_list}
+        self.machine_release_T = {m.m_idx: max(m.release_T, self.env.now) for m in self.m_list}
         # get jobs' available time info
-        self.job_available_T = {
-            _j_idx: max(self.in_system_jobs[_j_idx].available_T, self.env.now) for _j_idx in self.remaining_trajectories.keys()}
+        self.job_available_T = {_j_idx: max(self.in_system_jobs[_j_idx].available_T, self.env.now) for _j_idx in self.remaining_trajectories.keys()}
         # build the optimization model
         with gp.Env(empty=True) as self.grb_env:
             self.grb_env.setParam('LogToConsole', 0)
@@ -170,6 +168,7 @@ class OPT_scheduler:
                 # and an extra push
                 for j, m in pairJobLastOp:
                     model.setObjectiveN(expr = varJobCompT[j], index = j+2, priority = -2)
+                #model.setObjectiveN(expr = varOpBeginT.sum(), index = 2, priority = -2)
                 # run the optimization
                 model.optimize()
                 '''

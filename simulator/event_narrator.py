@@ -157,13 +157,13 @@ class Narrator:
             self.logger.error(msg)
         # compare each operation in schedule and execution
         # mismatch doesn't mean simulation failed, but indicate likely "under-optimization"
-        # only meaningful when processing time variablity is none
-        if self.opt_mode and self.pt_cv == 0:
+        # only meaningful when processing variablity and breakdown time (if any) variablity are 0
+        if self.opt_mode and self.pt_cv == 0 and (self.machine_breakdown and self.random_MTTR) == False:
+            self.logger.debug("Schedule <-> Execution match check needed")
             _mismatch = {}
             for _j_idx, ops in self.central_scheduler.j_op_by_schedule.items():
-                print(_j_idx, ops)
                 compare = zip(ops, self.recorder.j_operation_dict[_j_idx][-len(ops):])
-                for E, A in compare:
+                for E, A in compare: # E, A are both (m_idx, opBeginT), one is expected, one is actual 
                     if E[1]!=A[1]: 
                         try:
                             _mismatch[_j_idx].append("M{}, ET:{}, AT:{}".format(E[0], E[1], A[1]))
@@ -181,10 +181,12 @@ class Narrator:
                 self.machine_breakdown, self.MTBF, self.random_MTBF, self.MTTR, self.random_MTTR)]
         else:
             m_config = ["Machine", self.m_no, "Machine Breakdown: False"]
-        j_config = ["Job", self.j_idx, "pt range: {}\npt cv: {}".format(self.pt_range, self.pt_cv)]
-        self.logger.info('Simulation Ended, here is the shopfloor configuration:\n{}'.format(
-            tabulate([header, m_config, j_config],
-                      headers="firstrow", tablefmt="psql")))
+        j_config = ["Job", self.j_idx, "pt range: {}\npt cv: {}\ndue tightness: {}".format(self.pt_range, self.pt_cv, self.due_tightness)]
+        sqc_config = ['Sqc', "N.A.", self.sqc_rule.__name__]
+        sim_config = ["Sim", "N.A.", "Span: {}\nUtilization: {}%\nRandom seed: {}".format(self.span, self.E_utliz*100, np.random.get_state()[1][0])]
+        self.logger.info('Simulation Ended, here is the simulation configuration:\n{}'.format(
+            tabulate([header, m_config, j_config, sqc_config, sim_config],
+                      headers="firstrow", tablefmt="grid")))
         # performance
         cum_tard = sum(self.recorder.j_tardiness_dict.values())
         self.logger.info('Performance:\n{}'.format(
