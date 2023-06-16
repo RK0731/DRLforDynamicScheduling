@@ -26,3 +26,8 @@ class SQC_rule:
     # dummy function, will use the draw_from_schedule function after creating a central scheduler object
     def opt_scheduler(cls, jobs, *args, **kwargs): 
         pass
+
+    @classmethod 
+    # dummy function, will use the function after creating a DRL scheduler
+    def DRL_scheduler(cls, jobs, *args, **kwargs): 
+        pass
