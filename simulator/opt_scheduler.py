@@ -19,6 +19,7 @@ class OPT_scheduler:
 
 
     def solve_problem(self, **kwargs):
+        _begin_T = time.time()
         # if there's only one job in system
         if len(self.in_system_jobs) == 1:
             self.solve_without_optimization()
@@ -47,6 +48,7 @@ class OPT_scheduler:
             self.solve_without_optimization()
         else:
             self.solve_by_optimization()
+        self.recorder.opt_time_expense += (time.time() - _begin_T)
 
 
     # no intersection between jobs, no optimization 

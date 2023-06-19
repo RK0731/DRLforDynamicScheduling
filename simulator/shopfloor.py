@@ -20,6 +20,7 @@ class Shopfloor:
         # STEP 1. important features shared by all machine and job instances
         self.env = simpy.Environment()
         self.kwargs = kwargs
+        self.program_start_T = time.time()
         with open(Path.cwd() / "config" / "logging_config.json") as f:
             log_config = json.load(f)
             logging.config.dictConfig(log_config)
@@ -33,14 +34,14 @@ class Shopfloor:
             self.m_list.append(Machine(env = self.env, logger = self.logger, recorder = self.recorder, m_idx=i, **kwargs))
         # STEP 3: create the event narrator of dynamic events
         self.logger.debug("Initializing event narrator, machine breakdown: {}, processing time variability: {}".format(kwargs['machine_breakdown'], kwargs['processing_time_variability']))
-        self.narrator = Narrator(env = self.env, logger = self.logger, recorder = self.recorder, m_list = self.m_list, **kwargs)
+        self.narrator = Narrator(env = self.env, logger = self.logger, recorder = self.recorder, m_list = self.m_list, program_start_T = self.program_start_T, **kwargs)
 
     
     def run_simulation(self):
         self.env.run(until=self.kwargs['span']+1000)
         self.narrator.post_simulation()
-        # if the simulation completed without error and formal mode is activated, copy paste the log file to storage
-        if "formal" in self.kwargs and self.kwargs['formal']:
+        # if the simulation completed without error and "keep" mode is activated, copy the log file to storage
+        if "keep" in self.kwargs and self.kwargs['keep']:
             ct = ''.join([str(x) for x in time.strftime("%Y,%m,%d,%H,%M,%S").split(',')])
             shutil.copy(Path.cwd() / "log" / "sim.log", Path.cwd() / "log" / "past" / "{}_sim.log".format(ct))
         if "draw_gantt" in self.kwargs and self.kwargs['draw_gantt'] > 0:
@@ -50,10 +51,10 @@ class Shopfloor:
 
 
 if __name__ == '__main__':
-    spf = Shopfloor(m_no = 5, span = 100, pt_range = [1,10], due_tightness = 1.5, E_utliz = 0.8,
+    spf = Shopfloor(m_no = 5, span = 50, pt_range = [1,10], due_tightness = 2, E_utliz = 0.75,
                     machine_breakdown = True, MTBF = 100, MTTR = 10, random_MTBF = True, random_MTTR = False,
                     processing_time_variability = False, pt_cv = 0.1,
-                    draw_gantt = 5, save_gantt = True, seed = 9680829,
+                    draw_gantt = 5, save_gantt = True, seed = 45234554,
                     sqc_rule = SQC_rule.opt_scheduler
                     )
     spf.run_simulation()

@@ -190,10 +190,15 @@ class Narrator:
             j_config = ["Job", self.j_idx, "pt range: {}, deterministic\ndue tightness: {}".format(self.pt_range, self.due_tightness)]            
         # others
         sqc_config = ['Sqc', "N.A.", self.sqc_rule.__name__]
-        sim_config = ["Sim", "N.A.", "Span: {}\nUtilization: {}%\nRandom seed: {}/{}".format(self.span, self.E_utliz*100, self.seed, self.rng)]
+        sim_config = ["Sim", "N.A.", "Span: {}\nUtilization: {}%\nRandom seed: {} / {}".format(self.span, self.E_utliz*100, self.seed, self.rng)]
+        if self.opt_mode:
+            tt= time.time()-self.program_start_T
+            opt_tt = self.recorder.opt_time_expense
+            sim_config[-1]+= "\nTime: Toal: {}s, OPT: {}s, {}%".format(round(tt,2), round(opt_tt,2), round(100*(opt_tt/tt),2))
+        # print to console
         self.logger.info('Simulation Ended, here is the simulation configuration:\n{}'.format(
             tabulate([header, m_config, j_config, sqc_config, sim_config],
-                      headers="firstrow", tablefmt="grid")))
+                    headers="firstrow", tablefmt="grid")))
         # performance
         cum_tard = sum(self.recorder.j_tardiness_dict.values())
         self.logger.info('Performance:\n{}'.format(
@@ -224,6 +229,8 @@ class Recorder:
     def __init__(self, **kwargs):
         for k, v in kwargs.items():
             setattr(self, k, v)
+        if self.sqc_rule == SQC_rule.opt_scheduler:
+            self.opt_time_expense = 0
         # record the job's journey
         self.in_system_jobs = {}
         self.j_operation_dict = {}
