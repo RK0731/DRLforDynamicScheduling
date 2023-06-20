@@ -72,11 +72,12 @@ class Machine:
                 # WARNING: a sequencing decision has been made, we poped the first element from the schedule
                 self.next_job_in_schedule = self.job_sequencing(m_idx = self.m_idx)
                 # if the job in schedule is NOT in queue, activate the strategic idleness process
-                self.check_status()
+                self.check_strategic_idleness()
                 yield self.required_job_in_queue_event
                 # when job required is in queue (with ot without strategic idleness)
                 self.sqc_decision_pos = [j.j_idx for j in self.queue].index(self.next_job_in_schedule)
                 self.picked_j_instance = self.queue[self.sqc_decision_pos]
+                self.recorder.sqc_occ_opt += 1
                 self.logger.info("{} > SCH: Machine {} picks Job {}".format(
                     self.env.now, self.m_idx, self.picked_j_instance.j_idx))
             # TYPE II: if sequencing is completely reactive
@@ -85,13 +86,15 @@ class Machine:
                 # the returned value is picked job's position in machine's queue
                 self.sqc_decision_pos = self.job_sequencing(jobs = self.queue)
                 self.picked_j_instance = self.queue[self.sqc_decision_pos]
+                self.recorder.sqc_occ_reactive += 1
                 self.logger.info("{} > SQC (Reactive): Machine {} picks Job {}".format(
                     self.env.now, self.m_idx, self.picked_j_instance.j_idx))
             # otherwise simply select the first(only) one
             else:
                 self.sqc_decision_pos = 0
                 self.picked_j_instance = self.queue[self.sqc_decision_pos]
-                self.logger.info("{} > SQC off: Machine {} processes Job {}".format(
+                self.recorder.sqc_occ_passive += 1
+                self.logger.info("{} > SQC off (Reactive): Machine {} processes Job {}".format(
                     self.env.now, self.m_idx, self.picked_j_instance.j_idx))
             """
             PART II. after the decision, update infromation and perform the operation
@@ -153,16 +156,21 @@ class Machine:
         # change the stocking status if machine is currently idle (empty stock or strategic)
         if not self.sufficient_stock.triggered:
             self.sufficient_stock.succeed()
-        # if schedule mdoe is ON, need to check if arrived job match the required job, to reactivate machine from idleness
-        if self.schedule_mode:
-            self.update_status_after_job_arrival(arriving_job.j_idx)
         common_msg = "{} > ARV: Job {} arrived at Machine {}, current status {}, queue: {}".format(
             self.env.now, arriving_job.j_idx, self.m_idx, self.status, [j.j_idx for j in self.queue])
         extra_msg = ", next job in schedule: {}".format(self.next_job_in_schedule)
         self.logger.info(common_msg + extra_msg if self.schedule_mode else common_msg)
+        # if schedule mdoe is ON, need to check if arrived job match the required job, to reactivate machine from idleness
+        if self.schedule_mode:
+            # check if arriving job match the [next_job_in_schedule]
+            if arriving_job.j_idx == self.next_job_in_schedule:
+                if not self.required_job_in_queue_event.triggered:
+                    self.required_job_in_queue_event.succeed()
+                    self.logger.info("{} > STR.IDL. off: Machine {} reactivated".format(self.env.now, self.m_idx))
 
 
-    def check_status(self):
+    # suspend the machine if strategic idleness is needed
+    def check_strategic_idleness(self):
         # if the next job in schedule is now queuing
         if self.next_job_in_schedule in [j.j_idx for j in self.queue]:
             if not self.required_job_in_queue_event.triggered:
@@ -170,7 +178,8 @@ class Machine:
         # otherwise need to wait for the arrival of required job
         else:
             self.status = "strategic_idle" # and change the status
-            self.logger.info("{} > STR.IDL. on: Machine {} SUSPENDED, waiting for Job {}, current queue: {}".format(
+            self.recorder.sqc_occ_SI += 1
+            self.logger.info("{} > STR.IDL. on: Machine {} suspended, waiting for Job {}, current queue: {}".format(
                 self.env.now, self.m_idx, self.next_job_in_schedule, [j.j_idx for j in self.queue]))
             self.required_job_in_queue_event = self.env.event()
 
@@ -180,13 +189,6 @@ class Machine:
         if self.next_job_in_schedule in [j.j_idx for j in self.queue]:
             if not self.required_job_in_queue_event.triggered:
                 self.required_job_in_queue_event.succeed() 
-       
-
-    def update_status_after_job_arrival(self, _arriving_job_idx):
-        # check if arriving job match the [next_job_in_schedule]
-        if _arriving_job_idx == self.next_job_in_schedule:
-            if not self.required_job_in_queue_event.triggered:
-                self.required_job_in_queue_event.succeed()
 
 
     def after_decision(self) -> int:

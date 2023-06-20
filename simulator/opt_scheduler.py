@@ -63,6 +63,7 @@ class OPT_scheduler:
                 continue
             for _m_idx in _j_traj:
                 self.schedule[_m_idx] = [_j_idx]
+        # if there is a valid schedule
         if [sch for sch in self.schedule.values() if sch != []]:
             self.logger.info("{} > OPT off. New schedule: \n{}".format(self.env.now, tabulate([
                 ["Machine"]+list(self.schedule.keys()), ["Schedule"]+list(self.schedule.values()) ], headers="firstrow", tablefmt="psql")))

@@ -38,8 +38,8 @@ class Narrator:
         _beta = _E_pt / self.E_utliz # beta is the average time interval between job arrivals
         self.logger.debug("The expected utilization rate (excluding machine down time) is: [{}%]".format(self.E_utliz*100))
         self.logger.debug("Converted expected interval between job arrival is: [{}] (m_no: [{}], pt_range: {}, exp_pt: [{}])".format(_beta, self.m_no, self.pt_range, _E_pt))
-        # number of new jobs arrive within simulation, with 10% extra jobs as buffer
-        self.total_no = np.round(1.1*self.span/_beta).astype(int)
+        # number of new jobs arrive within simulation
+        self.total_no = np.round(self.span/_beta).astype(int)
         # the interval between job arrivals by exponential distribution
         self.arrival_interval = self.rng.exponential(_beta, self.total_no).round()
         # process the job arrival function
@@ -117,6 +117,7 @@ class Narrator:
             self.m_list[first_m].job_arrival(job_instance)
             # update the index of job
             self.j_idx += 1
+        self.job_creation_end_T = self.env.now
 
 
     # periodicall disable machines
@@ -195,8 +196,14 @@ class Narrator:
             j_config = ["Job", self.j_idx, "pt range: {}, deterministic\ndue tightness: {}".format(self.pt_range, self.due_tightness)]            
         # sequencing decision maker
         sqc_config = ['Sqc', "N.A.", self.sqc_rule.__name__]
+        if self.opt_mode:
+            sqc_config[-1] += "\nTotal: {}, Strategic idleness: {}".format(self.recorder.sqc_occ_opt, self.recorder.sqc_occ_SI)
+        else:
+            sqc_config[-1] += "\nReactive: {}, Passive: {}".format(self.recorder.sqc_occ_reactive, self.recorder.sqc_occ_passive)
         # simulation info
-        sim_config = ["Sim", "N.A.", "Span: {}\nUtilization rate: {}%\nRandom seed: {} / {}".format(self.span, self.E_utliz*100, self.seed, self.rng)]
+        avg_cum_m_run_T = sum([m.cumulative_runtime for m in self.m_list]) / self.m_no / self.job_creation_end_T
+        sim_config = ["Sim", "N.A.", "Span: {}, Actual: {}\nUtilization: Expected: {}%, Actual: {}%\nRandom seed: {} / {}".format(
+            self.span, self.job_creation_end_T, self.E_utliz*100, round(avg_cum_m_run_T*100, 2), self.seed, self.rng)]
         if self.opt_mode:
             tt= time.time()-self.program_start_T
             opt_tt = self.recorder.opt_time_expense
@@ -242,6 +249,8 @@ class Recorder:
             setattr(self, k, v)
         # sim data
         self.opt_time_expense = 0
+        # count occurance of sequencing decisions
+        self.sqc_occ_opt = self.sqc_occ_SI = self.sqc_occ_reactive = self.sqc_occ_passive = 0
         # record the job's journey
         self.in_system_jobs = {}
         self.j_operation_dict = {}
