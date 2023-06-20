@@ -54,6 +54,7 @@ class OPT_scheduler:
     # no intersection between jobs, no optimization 
     def solve_without_optimization(self):
         for _j_idx, _j_object in self.in_system_jobs.items():
+            # remove "processing" operations
             if _j_object.status == "queuing":
                 _j_traj = _j_object.remaining_machines
             elif len(_j_object.remaining_machines) > 1:
@@ -62,7 +63,9 @@ class OPT_scheduler:
                 continue
             for _m_idx in _j_traj:
                 self.schedule[_m_idx] = [_j_idx]
-        self.logger.info("{} > OPT off: new schedule {} / (sequence of jobs)\n".format(self.env.now, self.schedule)+"-"*88)
+        if [sch for sch in self.schedule.values() if sch != []]:
+            self.logger.info("{} > OPT off. New schedule: \n{}".format(self.env.now, tabulate([
+                ["Machine"]+list(self.schedule.keys()), ["Schedule"]+list(self.schedule.values()) ], headers="firstrow", tablefmt="psql")))
 
 
     # intersection detected, needs optimizaiton
@@ -170,19 +173,21 @@ class OPT_scheduler:
                 # and an extra push
                 for j, m in pairJobLastOp:
                     model.setObjectiveN(expr = varJobCompT[j], index = j+2, priority = -2)
-                #model.setObjectiveN(expr = varOpBeginT.sum(), index = 2, priority = -2)
+                # adding this constraint would produce perfect match schedule at the cost fo computation time
+                #model.setObjectiveN(expr = varOpBeginT.sum(), index = 1e5, priority = -3)
                 # run the optimization
                 model.optimize()
                 '''
                 PART IV: convert the result to valid schedule
                 '''
                 self.logger.debug("Optimization elapsed, model status: {}, time expense: {}s".format(
-                    self.grb_msg[model.status], round(time.time() - _opt_start,3)))
+                    self.grb_msg[model.status], round(time.time() - _opt_start, 3)))
                 self.convert_to_schedule(varOpBeginT)
         # close the environment, release the resource after this cycle
         self.grb_env.close()
 
 
+    # use the optmized operation begin time to build the schedule
     def convert_to_schedule(self, varOpBeginT: gp.tupledict) -> None:
         # reset the schedule
         self.schedule = {m.m_idx:[] for m in self.m_list}
@@ -194,17 +199,17 @@ class OPT_scheduler:
             self.schedule[_m_idx].append(_j_idx)
             # job's expected operation begin time in schedule
             self.j_op_by_schedule[_j_idx].append((_m_idx, round(var.X, 1)))
-        self.logger.info("New schedule (m_idx: [j_idx]): \n{}".format(self.schedule))
-        self.logger.debug("New jobs' operation in new schedule: \n{}".format(
-            tabulate([["Job", "Operations (m_idx, opBeginT)"],
-                      *[[_j_idx, op] for _j_idx, op in self.j_op_by_schedule.items()]],
-                      headers="firstrow", tablefmt="psql")))
+        self.logger.debug("New schedule: \n{}".format(tabulate([
+            ["Machine"]+list(self.schedule.keys()), ["Schedule"]+list(self.schedule.values()) ], headers="firstrow", tablefmt="psql")))
+        self.logger.debug("Jobs' operations in new schedule: \n{}".format(tabulate(
+            [["Job", "Operations (m_idx, opBeginT)"], *[[_j_idx, op] for _j_idx, op in self.j_op_by_schedule.items()]], headers="firstrow", tablefmt="psql")))
         self.update_machine_after_optimization()
 
 
     # update the job index that all machines should wait for
     def update_machine_after_optimization(self):
         for m in self.m_list:
+            # some machine get an empty schedule
             if not self.schedule[m.m_idx]:
                 continue
             #self.logger.debug("Machine {} schedule before {}".format(m.m_idx, self.schedule[m.m_idx]))

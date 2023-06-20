@@ -143,7 +143,7 @@ class Narrator:
             # summation of actual begin time and expected down time (MTTR)
             self.m_list[m_idx].release_T = actual_begin + self.MTTR
             if self.opt_mode:
-                self.logger.debug("Machine breakdown, call central scheduler to rebuild schedule\n"+"-"*88)
+                self.logger.debug("Machine breakdown, call central scheduler to rebuild schedule")
                 self.central_scheduler.solve_problem()
             # time of breakdown
             yield self.env.timeout(actual_end - self.env.now)
@@ -171,7 +171,7 @@ class Narrator:
                         except:
                             _mismatch[_j_idx] = ["M{}, ET:{}, AT:{}".format(E[0], E[1], A[1])]
             if len(_mismatch): 
-                self.logger.warning("Schedule and execution MISMATCH!:\n{}".format(
+                self.logger.warning("Schedule and execution MISMATCH!:\n{}\n".format(
                     tabulate([["Job", "Mismatch"],
                             *[[_j_idx, description] for _j_idx, description in _mismatch.items()]],
                             headers="firstrow", tablefmt="psql")))
@@ -179,8 +179,13 @@ class Narrator:
         header = ["Category", "Number", "Attributes"]
         # machine breakdown info
         if self.machine_breakdown:
-            m_config = ["Machine", self.m_no] + ["Machine Breakdown: {}\nMTBF: {}, random: {}\nMTTR: {}, random : {}".format(
-                self.machine_breakdown, self.MTBF, self.random_MTBF, self.MTTR, self.random_MTTR)]
+            m_config = ["Machine", self.m_no, "Machine Breakdown: {}".format(self.machine_breakdown)]
+            if self.random_MTBF: 
+                m_config[-1] += "\nMTBF: {}, random: {}".format(self.MTBF, self.random_MTBF) 
+            else: m_config[-1] += "\nMTBF: {}, deterministic".format(self.MTBF)
+            if self.random_MTTR: 
+                m_config[-1] += "\nMTTR: {}, random: {}".format(self.MTTR, self.random_MTTR) 
+            else: m_config[-1] += "\nMTTR: {}, deterministic".format(self.MTTR)
         else:
             m_config = ["Machine", self.m_no, "Machine Breakdown: False"]
         # job info
@@ -188,24 +193,30 @@ class Narrator:
             j_config = ["Job", self.j_idx, "pt range: {}\npt cv: {}\ndue tightness: {}".format(self.pt_range, self.pt_cv, self.due_tightness)]
         else:
             j_config = ["Job", self.j_idx, "pt range: {}, deterministic\ndue tightness: {}".format(self.pt_range, self.due_tightness)]            
-        # others
+        # sequencing decision maker
         sqc_config = ['Sqc', "N.A.", self.sqc_rule.__name__]
-        sim_config = ["Sim", "N.A.", "Span: {}\nUtilization: {}%\nRandom seed: {} / {}".format(self.span, self.E_utliz*100, self.seed, self.rng)]
+        # simulation info
+        sim_config = ["Sim", "N.A.", "Span: {}\nUtilization rate: {}%\nRandom seed: {} / {}".format(self.span, self.E_utliz*100, self.seed, self.rng)]
         if self.opt_mode:
             tt= time.time()-self.program_start_T
             opt_tt = self.recorder.opt_time_expense
-            sim_config[-1]+= "\nTime: Toal: {}s, OPT: {}s, {}%".format(round(tt,2), round(opt_tt,2), round(100*(opt_tt/tt),2))
+            sim_config[-1]+= "\nTime: Toal: {}s, OPT: {}s, {}%".format(round(tt,2), round(opt_tt,2), round(100*(opt_tt/tt),1))
+        else:
+            sim_config[-1]+= "\nTime: {}s".format(round(time.time()-self.program_start_T,2))
         # print to console
-        self.logger.info('Simulation Ended, here is the simulation configuration:\n{}'.format(
+        self.logger.info('Simulation Configurations:\n{}\n'.format(
             tabulate([header, m_config, j_config, sqc_config, sim_config],
                     headers="firstrow", tablefmt="grid")))
-        # performance
+        # performance metrics
         cum_tard = sum(self.recorder.j_tardiness_dict.values())
-        self.logger.info('Performance:\n{}'.format(
-            tabulate([["Category", "value"],
-                      ["Cum.Tard.", cum_tard],
-                      ["Avg.Tard.", round(cum_tard / (self.j_idx), 2)]],
-                      headers="firstrow", tablefmt="psql")))
+        max_tard = max(self.recorder.j_tardiness_dict.values())
+        cum_flow = sum(self.recorder.j_flowtime_dict.values())
+        max_flow = max(self.recorder.j_flowtime_dict.values())
+        self.logger.info('Performance:\n{}\n'.format(tabulate(
+            [["Category", "value"],
+            ["Tardiness", "sum: {}, max:{}, mean: {}".format(cum_tard, max_tard, round(cum_tard / (self.j_idx), 2))],
+            ["Flowtime", "sum:{}, max: {}, mean: {}".format(cum_flow, max_flow, round(cum_flow / (self.j_idx), 2))]],
+            headers="firstrow", tablefmt="grid")))
 
 
     def build_sqc_experience_repository(self, m_list): # build two dictionaries
@@ -229,8 +240,8 @@ class Recorder:
     def __init__(self, **kwargs):
         for k, v in kwargs.items():
             setattr(self, k, v)
-        if self.sqc_rule == SQC_rule.opt_scheduler:
-            self.opt_time_expense = 0
+        # sim data
+        self.opt_time_expense = 0
         # record the job's journey
         self.in_system_jobs = {}
         self.j_operation_dict = {}
