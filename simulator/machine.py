@@ -8,7 +8,7 @@ Either by a sequencing rule or a set of trained parameters
 from typing import Optional, Union, Literal, Any
 import simpy
 import numpy as np
-from sequencing_rule import *
+from simulator.sequencing_rule import *
 
 
 class Machine:

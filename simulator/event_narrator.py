@@ -1,8 +1,8 @@
 import numpy as np
 from tabulate import tabulate
-from job import *
-from sequencing_rule import *
-from opt_scheduler import *
+from simulator.job import *
+from simulator.sequencing_rule import *
+from simulator.opt_scheduler import *
 
 '''
 The module that creates dynamic events 
@@ -60,7 +60,7 @@ class Narrator:
             else: # otherwise a valid sequencing rule must be specified
                 try:
                     job_sequencing_func = kwargs['sqc_rule']
-                    self.logger.info("* Machine use [{}] sequencing rule".format(job_sequencing_func.__name__))
+                    self.logger.info("Machine use [{}] sequencing rule".format(job_sequencing_func.__name__))
                 except Exception as e:
                     self.logger.error("Sequencing rule is invalid! Invalid entry: [{}]".format(kwargs['sqc_rule']))
                     self.logger.error(str(e))
@@ -91,6 +91,7 @@ class Narrator:
 
     # continuously creating new jobs
     def process_job_creation(self):
+        self.program_start_T = time.time()
         # jobs are assumed to go through all machines
         trajectory_seed = np.arange(self.m_no)
         while self.j_idx < self.total_no:
@@ -220,8 +221,8 @@ class Narrator:
         max_flow = max(self.recorder.j_flowtime_dict.values())
         self.logger.info('Performance:\n{}\n'.format(tabulate(
             [["Category", "value"],
-            ["Tardiness", "sum: {}, max:{}, mean: {}".format(cum_tard, max_tard, round(cum_tard / (self.j_idx), 2))],
-            ["Flowtime", "sum:{}, max: {}, mean: {}".format(cum_flow, max_flow, round(cum_flow / (self.j_idx), 2))]],
+            ["Tardiness", "max: {}, mean: {}".format(round(max_tard,2), round(cum_tard / (self.j_idx), 2))],
+            ["Flowtime", "max: {}, mean: {}".format(round(max_flow,2), round(cum_flow / (self.j_idx), 2))]],
             headers="firstrow", tablefmt="grid")))
 
 

@@ -7,12 +7,11 @@ import time
 import json
 from pathlib import Path
 import shutil
-import argparse
-from job import *
-from machine import *
-from sequencing_rule import *
-from event_narrator import *
-from gantt_chart import *
+from simulator.job import *
+from simulator.machine import *
+from simulator.sequencing_rule import *
+from simulator.event_narrator import *
+from simulator.gantt_chart import *
 
 
 class Shopfloor:
@@ -20,7 +19,6 @@ class Shopfloor:
         # STEP 1. important features shared by all machine and job instances
         self.env = simpy.Environment()
         self.kwargs = kwargs
-        self.program_start_T = time.time()
         with open(Path.cwd() / "config" / "logging_config.json") as f:
             log_config = json.load(f)
             logging.config.dictConfig(log_config)
@@ -34,10 +32,11 @@ class Shopfloor:
             self.m_list.append(Machine(env = self.env, logger = self.logger, recorder = self.recorder, m_idx=i, **kwargs))
         # STEP 3: create the event narrator of dynamic events
         self.logger.debug("Initializing event narrator, machine breakdown: {}, processing time variability: {}".format(kwargs['machine_breakdown'], kwargs['processing_time_variability']))
-        self.narrator = Narrator(env = self.env, logger = self.logger, recorder = self.recorder, m_list = self.m_list, program_start_T = self.program_start_T, **kwargs)
+        self.narrator = Narrator(env = self.env, logger = self.logger, recorder = self.recorder, m_list = self.m_list, **kwargs)
 
     
     def run_simulation(self):
+        self.check_settings()
         self.env.run(until=self.kwargs['span']+1000)
         self.narrator.post_simulation()
         # if the simulation completed without error and "keep" mode is activated, copy the log file to storage
@@ -47,14 +46,12 @@ class Shopfloor:
         if "draw_gantt" in self.kwargs and self.kwargs['draw_gantt'] > 0:
             painter = Draw(self.recorder, **self.kwargs)
 
-
-
-
-if __name__ == '__main__':
-    spf = Shopfloor(m_no = 5, span = 50, pt_range = [1,10], due_tightness = 2, E_utliz = 0.75,
-                    machine_breakdown = True, MTBF = 100, MTTR = 10, random_MTBF = True, random_MTTR = False,
-                    processing_time_variability = False, pt_cv = 0.1,
-                    draw_gantt = 5, save_gantt = True,
-                    sqc_rule = SQC_rule.opt_scheduler
-                    )
-    spf.run_simulation()
+    
+    def check_settings(self):
+        # check for clash betwwen randomness and use of optimization
+        occ_variability = self.kwargs['random_MTTR'] or self.kwargs['processing_time_variability']
+        if occ_variability and self.kwargs['sqc_rule'] == SQC_rule.opt_scheduler:
+            Input = input("WARNING: Machine occupation time variance observed when using optimization algorithm-based scheduler! Processing time variance: {}, Random MTTR: {}.\nDo you still want to proceed? [Y/N]: ".format(
+                self.kwargs['processing_time_variability'], self.kwargs['random_MTTR']))
+            if Input != "Y":
+                exit()

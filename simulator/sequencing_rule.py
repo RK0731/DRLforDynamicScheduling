@@ -1,3 +1,4 @@
+import inspect
 import numpy as np
 
 class SQC_rule:
@@ -30,3 +31,7 @@ class SQC_rule:
     # dummy function, will use the function after creating a DRL scheduler
     def DRL_scheduler(cls, jobs, *args, **kwargs): 
         pass
+
+
+if __name__ == '__main__':
+    print(inspect.getmembers(SQC_rule, predicate=inspect.ismethod))
