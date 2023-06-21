@@ -22,9 +22,9 @@ parser.add_argument('-pt_cv', default=0.1, action='store', type=float, help='Coe
 # machine breakdown settings
 parser.add_argument('-mbkd', '--machine_breakdown', default=True, action='store_false', help='Simulate machine breakdown? (boolean)')
 parser.add_argument('-mtbf', default=100, help='Mean time between failure')
-parser.add_argument('-rnd_mtbf', default=False, action='store_true', help='Use random MTBF (if flagged)')
+parser.add_argument('-rnd_mtbf', default=False, action='store_true', help='Use random MTBF')
 parser.add_argument('-mttr', default=10, help='Mean time to repair')
-parser.add_argument('-rnd_mttr', default=False, action='store_true', help='Use random MTTR (if flagged)')
+parser.add_argument('-rnd_mttr', default=False, action='store_true', help='Use random MTTR')
 
 # plotting settings
 parser.add_argument('-draw', default=5, action='store', type=int, help='Any value greater than 0 would plot the gantt chart, always no-show when simulation span is longer than 200')

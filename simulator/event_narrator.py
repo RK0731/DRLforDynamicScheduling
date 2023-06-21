@@ -58,13 +58,8 @@ class Narrator:
                 job_sequencing_func = self.central_scheduler.draw_from_schedule
                 self.logger.info("* Optimization mode is ON, A [centralized Gurobi scheduler] is created, all machines use a central schedule")
             else: # otherwise a valid sequencing rule must be specified
-                try:
-                    job_sequencing_func = kwargs['sqc_rule']
-                    self.logger.info("Machine use [{}] sequencing rule".format(job_sequencing_func.__name__))
-                except Exception as e:
-                    self.logger.error("Sequencing rule is invalid! Invalid entry: [{}]".format(kwargs['sqc_rule']))
-                    self.logger.error(str(e))
-                    raise Exception
+                job_sequencing_func = kwargs['sqc_rule']
+                self.logger.info("Machine use [{}] sequencing rule".format(job_sequencing_func.__name__))
         else:
             # if no argument is given, default sequencing rule is FIFO
             self.logger.info("* Machine {} uses default FIFO rule".format(self.m_idx))
