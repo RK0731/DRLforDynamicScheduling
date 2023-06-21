@@ -117,7 +117,6 @@ class Narrator:
             self.m_list[first_m].job_arrival(job_instance)
             # update the index of job
             self.j_idx += 1
-        self.job_creation_end_T = self.env.now
 
 
     # periodicall disable machines
@@ -201,9 +200,9 @@ class Narrator:
         else:
             sqc_config[-1] += "\nReactive: {}, Passive: {}".format(self.recorder.sqc_occ_reactive, self.recorder.sqc_occ_passive)
         # simulation info
-        avg_cum_m_run_T = sum([m.cumulative_runtime for m in self.m_list]) / self.m_no / self.job_creation_end_T
+        avg_cum_m_run_T = sum([m.cumulative_runtime for m in self.m_list]) / self.m_no / self.recorder.last_job_comp_T
         sim_config = ["Sim", "N.A.", "Span: {}, Actual: {}\nUtilization: Expected: {}%, Actual: {}%\nRandom seed: {} / {}".format(
-            self.span, self.job_creation_end_T, self.E_utliz*100, round(avg_cum_m_run_T*100, 2), self.seed, self.rng)]
+            self.span, self.recorder.last_job_comp_T, self.E_utliz*100, round(avg_cum_m_run_T*100, 2), self.seed, self.rng)]
         if self.opt_mode:
             tt= time.time()-self.program_start_T
             opt_tt = self.recorder.opt_time_expense
