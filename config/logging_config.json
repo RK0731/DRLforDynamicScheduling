@@ -21,12 +21,23 @@
         "filename": "./log/sim.log",
         "mode": "w",
         "formatter": "brief"
+      },
+      "multi_root_file": {
+        "class": "logging.FileHandler",
+        "filename": "./log/multi_thread/sim{}.log",
+        "mode": "w",
+        "formatter": "brief"
       }
+
     },
     "loggers": {
       "sim_logger": {
         "level": "DEBUG",
         "handlers": ["console", "root_file"]
+      },
+      "multi_logger":{
+        "level": "DEBUG",
+        "handlers": ["console", "multi_root_file"]
       }
     }
 }

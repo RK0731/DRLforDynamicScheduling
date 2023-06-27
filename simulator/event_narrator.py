@@ -176,11 +176,11 @@ class Narrator:
         # machine breakdown info
         if self.machine_breakdown:
             m_config = ["Machine", self.m_no, "Machine Breakdown: {}".format(self.machine_breakdown)]
-            if self.random_MTBF: 
-                m_config[-1] += "\nMTBF: {}, random: {}".format(self.MTBF, self.random_MTBF) 
+            if self.random_MTBF:
+                m_config[-1] += "\nMTBF: {}, random: {}".format(self.MTBF, self.random_MTBF)
             else: m_config[-1] += "\nMTBF: {}, deterministic".format(self.MTBF)
-            if self.random_MTTR: 
-                m_config[-1] += "\nMTTR: {}, random: {}".format(self.MTTR, self.random_MTTR) 
+            if self.random_MTTR:
+                m_config[-1] += "\nMTTR: {}, random: {}".format(self.MTTR, self.random_MTTR)
             else: m_config[-1] += "\nMTTR: {}, deterministic".format(self.MTTR)
         else:
             m_config = ["Machine", self.m_no, "Machine Breakdown: False"]

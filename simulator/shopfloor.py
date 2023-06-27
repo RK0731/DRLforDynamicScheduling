@@ -19,10 +19,25 @@ class Shopfloor:
         # STEP 1. important features shared by all machine and job instances
         self.env = simpy.Environment()
         self.kwargs = kwargs
-        with open(Path.cwd() / "config" / "logging_config.json") as f:
-            log_config = json.load(f)
-            logging.config.dictConfig(log_config)
-            self.logger = logging.getLogger("sim_logger")
+        if "thread" in kwargs:
+            self.logger = logging.getLogger("logger_"+str(kwargs['thread']))
+            formatter = logging.Formatter('%(asctime)s - [{}] %(levelname)s - %(message)s'.format(kwargs['thread']))
+            filehandler = logging.FileHandler('./log/multi_thread/sim_{}.log'.format(kwargs['thread']), 'w')
+            filehandler.setFormatter(formatter)
+            self.logger.addHandler(filehandler)
+            '''
+            streamhandler = logging.StreamHandler()
+            streamhandler.setFormatter(formatter)
+            self.logger.addHandler(streamhandler)
+            '''
+            # set the log level to INFO, DEBUG as the default is ERROR
+            self.logger.setLevel(logging.DEBUG)
+            self.logger.info(str(self.logger))
+        else:
+            with open(Path.cwd() / "config" / "logging_config.json") as f:
+                log_config = json.load(f)
+                logging.config.dictConfig(log_config)
+                self.logger = logging.getLogger("sim_logger")
         self.recorder = Recorder(**kwargs) # recorder object shared by all other objects
         # STEP 2. create machines
         self.m_list = []
