@@ -24,7 +24,7 @@ class Shopfloor:
             log_config = json.load(f)
             if "thread" in kwargs:
                 self.logger = logging.getLogger("logger_"+str(kwargs['thread']))
-                formatter = logging.Formatter(log_config['formatters']['brief']['format'])
+                formatter = logging.Formatter(log_config['formatters']['multi']['format'].format(kwargs['thread']))
                 filehandler = logging.FileHandler(log_config['handlers']['multi_root_file']['filename'].format(kwargs['thread']), 'w')
                 filehandler.setFormatter(formatter)
                 self.logger.addHandler(filehandler)

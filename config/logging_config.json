@@ -9,6 +9,10 @@
       "brief": {
         "format": "[%(module)+13s: %(lineno)-3d] %(levelname)-5s => %(message)s",
         "datefmt": "%Y-%m-%d %H:%M:%S"
+      },
+      "multi": {
+        "format": "[{}][%(module)+13s: %(lineno)-3d] %(levelname)-5s => %(message)s",
+        "datefmt": "%Y-%m-%d %H:%M:%S"
       }    
     },
     "handlers": {
