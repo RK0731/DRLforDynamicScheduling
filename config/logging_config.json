@@ -28,7 +28,7 @@
       },
       "multi_root_file": {
         "class": "logging.FileHandler",
-        "filename": "./log/multi_thread/sim_{}.log",
+        "filename": "./log/multi_thread",
         "mode": "w",
         "formatter": "brief"
       }

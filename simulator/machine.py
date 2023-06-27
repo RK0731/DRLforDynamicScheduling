@@ -117,12 +117,10 @@ class Machine:
             if not self.working_event.triggered:
                 self.status = "down"
                 yield self.env.process(self.process_breakdown())
-                self.state_update_all()
             # check the stock level
             if len(self.queue) == 0:
                 self.status = "idle"
                 yield self.env.process(self.process_idle())
-                self.state_update_all()
     
 
     # when there's no job queueing, machine becomes idle
@@ -221,21 +219,13 @@ class Machine:
         self.recorder.m_cum_runtime_dict[self.m_idx] = self.cumulative_runtime
 
 
-    '''
-    3. downwards are functions that related to information update and exchange
-       especially the information that will be used by other agents on shop floor
-    '''
-
-    # call this function after the completion of operation
-    def state_update_all(self):
-        pass
-
-
-    '''
-    4. downwards are functions related to the calculation of reward and construction of state
-       only be called if the sequencing learning mode is activated
-       the options of reward function are listed at bottom
-    '''
+    def overstay_check(self):
+        if not self.queue:
+            return
+        for j in self.queue:
+            overstay = max(0, self.env.now - j.due)
+            if overstay > 200:
+                j.overstay()
 
 
     # this function is called only if self.sequencing_learning_event is triggered

@@ -25,7 +25,9 @@ class Shopfloor:
             if "thread" in kwargs:
                 self.logger = logging.getLogger("logger_"+str(kwargs['thread']))
                 formatter = logging.Formatter(log_config['formatters']['multi']['format'].format(kwargs['thread']))
-                filehandler = logging.FileHandler(log_config['handlers']['multi_root_file']['filename'].format(kwargs['thread']), 'w')
+                _fpath = Path(log_config['handlers']['multi_root_file']['filename'])
+                if not _fpath.exists(): _fpath.mkdir() 
+                filehandler = logging.FileHandler(_fpath / "sim_log_{}.log".format(kwargs['thread']), 'w')
                 filehandler.setFormatter(formatter)
                 self.logger.addHandler(filehandler)
                 self.logger.setLevel(logging.DEBUG)
