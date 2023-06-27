@@ -24,7 +24,7 @@
       },
       "multi_root_file": {
         "class": "logging.FileHandler",
-        "filename": "./log/multi_thread/sim{}.log",
+        "filename": "./log/multi_thread/sim_{}.log",
         "mode": "w",
         "formatter": "brief"
       }
@@ -34,10 +34,6 @@
       "sim_logger": {
         "level": "DEBUG",
         "handlers": ["console", "root_file"]
-      },
-      "multi_logger":{
-        "level": "DEBUG",
-        "handlers": ["console", "multi_root_file"]
       }
     }
 }

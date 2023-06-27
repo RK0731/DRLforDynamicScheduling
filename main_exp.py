@@ -42,7 +42,7 @@ args = parser.parse_args()
 
 if __name__ == '__main__':
     if args.thread <= 1:
-        spf = Shopfloor(m_no = args.m_no, span = args.span, E_utliz = args.utl, seed = 569653,
+        spf = Shopfloor(m_no = args.m_no, span = args.span, E_utliz = args.utl,
                         pt_range = args.pt_range, due_tightness = args.due_tightness, processing_time_variability = args.pt_variability, pt_cv = args.pt_variability,
                         machine_breakdown = args.machine_breakdown, MTBF = args.mtbf, MTTR = args.mttr, random_MTBF = args.rnd_mtbf, random_MTTR = args.rnd_mttr,
                         draw_gantt = args.draw, save_gantt = args.save_gantt,
