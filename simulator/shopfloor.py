@@ -20,18 +20,18 @@ class Shopfloor:
         self.env = simpy.Environment()
         self.kwargs = kwargs
         # set logger
-        with open(Path.cwd() / "config" / "logging_config.json") as f:
-            log_config = json.load(f)
-            if "thread" in kwargs:
-                self.logger = logging.getLogger("logger_"+str(kwargs['thread']))
-                formatter = logging.Formatter(log_config['formatters']['multi']['format'].format(kwargs['thread']))
-                _fpath = Path(log_config['handlers']['multi_root_file']['filename'])
-                if not _fpath.exists(): _fpath.mkdir() 
-                filehandler = logging.FileHandler(_fpath / "sim_log_{}.log".format(kwargs['thread']), 'w')
-                filehandler.setFormatter(formatter)
-                self.logger.addHandler(filehandler)
-                self.logger.setLevel(logging.DEBUG)
-            else:
+        if "thread" in kwargs:
+            self.logger = logging.getLogger("logger_"+str(kwargs['thread']))
+            formatter = logging.Formatter("[{}][%(module)+13s: %(lineno)-3d] %(levelname)-5s => %(message)s".format(kwargs['thread']))
+            _fpath = Path("./log/multi_thread")
+            if not _fpath.exists(): _fpath.mkdir() 
+            filehandler = logging.FileHandler(_fpath / "sim_log_{}.log".format(kwargs['thread']), 'w')
+            filehandler.setFormatter(formatter)
+            self.logger.addHandler(filehandler)
+            self.logger.setLevel(logging.DEBUG)
+        else:
+            with open(Path.cwd() / "config" / "logger_config.json") as f:
+                log_config = json.load(f)
                 logging.config.dictConfig(log_config)
                 self.logger = logging.getLogger("sim_logger")
         self.recorder = Recorder(**kwargs) # recorder object shared by all other objects

@@ -15,9 +15,9 @@ parser.add_argument('-utl', default=0.75, action='store', type=float, help='Expe
 parser.add_argument('-seed', default=0, action='store', type=int, help='Random seed')
 
 # job and processing time settings
-parser.add_argument('-ptr','--pt_range', default=[1,10], action='store', type=list, help='Range of processing time')
+parser.add_argument('-pt_r','--pt_range', default=[1,10], action='store', type=list, help='Range of processing time')
 parser.add_argument('-dt', '--due_tightness', default=2, action='store', type=float, help='Due time tightness')
-parser.add_argument('-ptv', '--pt_variability', default=False, action='store_true', help='Flag to use non-deterministic processing time? (boolean)')
+parser.add_argument('-pt_v', '--pt_variability', default=False, action='store_true', help='Flag to use non-deterministic processing time? (boolean)')
 parser.add_argument('-pt_cv', default=0.1, action='store', type=float, help='Coefficiency of variance of processing time')
 
 # machine breakdown settings
