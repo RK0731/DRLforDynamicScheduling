@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import threading
 import simpy
 import pandas as pd
 import logging.config
@@ -14,18 +15,36 @@ from simulator.event_narrator import *
 from simulator.gantt_chart import *
 
 
+class MainSimulator:
+    def __init__(self, **kwargs) -> None:
+        if kwargs['multi_thread'] == False:
+            spf = Shopfloor(**kwargs)
+            spf.run_simulation()
+        else:
+            # disable plotting
+            kwargs['draw_gantt'] = False
+            # create multiple threads
+            spf_dict = {}
+            sim_thread_dict = {}
+            for idx in range(1, kwargs['thread_no'] + 1):
+                spf_dict[idx] = Shopfloor(thread_idx = idx, **kwargs)
+                sim_thread_dict[idx] = threading.Thread(target=spf_dict[idx].run_simulation)
+                sim_thread_dict[idx].start()
+
+
+
 class Shopfloor:
     def __init__(self, **kwargs):
         # STEP 1. important features shared by all machine and job instances
         self.env = simpy.Environment()
         self.kwargs = kwargs
         # set logger
-        if "thread" in kwargs:
-            self.logger = logging.getLogger("logger_"+str(kwargs['thread']))
-            formatter = logging.Formatter("[{}][%(module)+13s: %(lineno)-3d] %(levelname)-5s => %(message)s".format(kwargs['thread']))
+        if "thread_idx" in kwargs:
+            self.logger = logging.getLogger("logger_"+str(kwargs['thread_idx']))
+            formatter = logging.Formatter("[{}][%(module)+13s: %(lineno)-3d] %(levelname)-5s => %(message)s".format(kwargs['thread_idx']))
             _fpath = Path("./log/multi_thread")
             if not _fpath.exists(): _fpath.mkdir() 
-            filehandler = logging.FileHandler(_fpath / "sim_log_{}.log".format(kwargs['thread']), 'w')
+            filehandler = logging.FileHandler(_fpath / "sim_log_{}.log".format(kwargs['thread_idx']), 'w')
             filehandler.setFormatter(formatter)
             self.logger.addHandler(filehandler)
             self.logger.setLevel(logging.DEBUG)

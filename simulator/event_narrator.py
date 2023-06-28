@@ -25,6 +25,7 @@ class Narrator:
             self.seed = np.random.randint(0, 1e10)
             self.logger.warning("Random seed is not specified, generated seed: {}, do this only for training!".format(self.seed))
         self.rng = np.random.default_rng(seed = self.seed)
+        # use alive bar instead of logging
         '''
         1.1 Core components: machines and dynamic job arrivals
         '''
@@ -235,6 +236,7 @@ class Narrator:
         self.rep_memo[m_idx].append(complete_exp)
         self.reward_record[m_idx][0].append(self.env.now)
         self.reward_record[m_idx][1].append(r_t)
+
 
 
 # Retain all records
