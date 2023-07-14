@@ -9,7 +9,7 @@ parser = argparse.ArgumentParser(description='demonstration')
 
 # system specification
 parser.add_argument('-m_no', default=5, action='store', type=int, help='Number of Machines in system')
-parser.add_argument('-span', default=50, action='store', type=int, help='Length of simulation')
+parser.add_argument('-span', default=100, action='store', type=int, help='Length of simulation')
 parser.add_argument('-utl', '--E_utliz', default=0.75, action='store', type=float, help='Expected system utilization rate')
 parser.add_argument('-seed', default=0, action='store', type=int, help='Random seed')
 
@@ -34,7 +34,7 @@ parser.add_argument('-save_gantt', default=True, action='store_false', help='Sav
 parser.add_argument('-sqc', '--sqc_rule', default= SQC_rule.FIFO, type=lambda x:eval("SQC_rule."+str(x)), help='Sequencing rule or scheduler')
 
 # threading
-parser.add_argument('-multi_thread', default= False, action='store_true', help='Use this flag to create multiple threads/environments')
+parser.add_argument('-multi_thread', default= True, action='store_true', help='Use this flag to create multiple threads/environments')
 parser.add_argument('-thread_no', default= 4, type=int, help='Number of threads')
 
 
@@ -42,7 +42,7 @@ args = parser.parse_args()
 
 
 if __name__ == '__main__':
-    MainSimulator(m_no = args.m_no, span = args.span, E_utliz = args.E_utliz,
+    MainSimulatorProcessing(m_no = args.m_no, span = args.span, E_utliz = args.E_utliz,
         pt_range = args.pt_range, due_tightness = args.due_tightness, processing_time_variability = args.processing_time_variability, pt_cv = args.pt_cv,
         machine_breakdown = args.machine_breakdown, MTBF = args.MTBF, MTTR = args.MTTR, random_MTBF = args.random_MTBF, random_MTTR = args.random_MTTR,
         draw_gantt = args.draw_gantt, save_gantt = args.save_gantt, multi_thread = args.multi_thread, thread_no = args.thread_no,
