@@ -9,7 +9,7 @@ parser = argparse.ArgumentParser(description='demonstration')
 
 # system specification
 parser.add_argument('-m_no', default=5, action='store', type=int, help='Number of Machines in system')
-parser.add_argument('-span', default=100, action='store', type=int, help='Length of simulation')
+parser.add_argument('-span', default=50, action='store', type=int, help='Length of simulation')
 parser.add_argument('-utl', '--E_utliz', default=0.75, action='store', type=float, help='Expected system utilization rate')
 parser.add_argument('-seed', default=0, action='store', type=int, help='Random seed')
 
@@ -31,10 +31,10 @@ parser.add_argument('-draw', '--draw_gantt', default=5, action='store', type=int
 parser.add_argument('-save_gantt', default=True, action='store_false', help='Save the gantt chart?')
 
 # scheduler
-parser.add_argument('-sqc', '--sqc_rule', default= SQC_rule.FIFO, type=lambda x:eval("SQC_rule."+str(x)), help='Sequencing rule or scheduler')
+parser.add_argument('-sqc', '--sqc_rule', default= SQC_rule.opt_scheduler, type=lambda x:eval("SQC_rule."+str(x)), help='Sequencing rule or scheduler')
 
 # threading
-parser.add_argument('-multi_thread', default= True, action='store_true', help='Use this flag to create multiple threads/environments')
+parser.add_argument('-multi_thread', default=False , action='store_true', help='Use this flag to create multiple threads/environments')
 parser.add_argument('-thread_no', default= 4, type=int, help='Number of threads')
 
 

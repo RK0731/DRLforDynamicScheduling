@@ -9,11 +9,11 @@ import time
 import json
 from pathlib import Path
 import shutil
-from simulator.job import *
-from simulator.machine import *
-from simulator.sequencing_rule import *
-from simulator.event_narrator import *
-from simulator.gantt_chart import *
+from .job import *
+from .machine import *
+from .sequencing_rule import *
+from .event_narrator import *
+from .gantt_chart import *
 
 
 class MainSimulator:

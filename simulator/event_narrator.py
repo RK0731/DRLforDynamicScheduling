@@ -1,8 +1,8 @@
 import numpy as np
 from tabulate import tabulate
-from simulator.job import *
-from simulator.sequencing_rule import *
-from simulator.opt_scheduler import *
+from .job import *
+from .sequencing_rule import *
+from .opt_scheduler import *
 
 '''
 The module that creates dynamic events 
