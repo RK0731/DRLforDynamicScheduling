@@ -44,8 +44,10 @@ args = parser.parse_args()
 if __name__ == '__main__':
     MainSimulatorProcessing(
         m_no = args.m_no, span = args.span, E_utliz = args.E_utliz,
-        pt_range = args.pt_range, due_tightness = args.due_tightness, processing_time_variability = args.processing_time_variability, pt_cv = args.pt_cv,
-        machine_breakdown = args.machine_breakdown, MTBF = args.MTBF, MTTR = args.MTTR, random_MTBF = args.random_MTBF, random_MTTR = args.random_MTTR,
+        pt_range = args.pt_range, due_tightness = args.due_tightness, 
+        processing_time_variability = args.processing_time_variability, pt_cv = args.pt_cv,
+        machine_breakdown = args.machine_breakdown, MTBF = args.MTBF, MTTR = args.MTTR, 
+        random_MTBF = args.random_MTBF, random_MTTR = args.random_MTTR,
         draw_gantt = args.draw_gantt, save_gantt = args.save_gantt, multi_thread = args.multi_thread, thread_no = args.thread_no,
         sqc_rule = args.sqc_rule
         )
