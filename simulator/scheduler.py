@@ -8,7 +8,7 @@ import gurobipy as gp
 from gurobipy import GRB
 
 
-class GurobiScheduler:
+class CentralScheduler:
     def __init__(self, *args, **kwargs):
         for k, v in kwargs.items():
             setattr(self, k, v)
@@ -30,7 +30,7 @@ class GurobiScheduler:
         self.remaining_trajectories = {}
         self.remaining_pts = {}
         self.job_intersections = {}
-        # extract the trajectory and processing time info of jobs that not yet to be completed
+        # extract the trajectory and processing time info of jobs that not yet completed
         for _j_idx, _job in self.in_system_jobs.items():
             if _job.status=='queuing':
                 self.remaining_trajectories[_j_idx] = _job.remaining_machines

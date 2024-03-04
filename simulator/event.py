@@ -54,7 +54,7 @@ class Narrator:
                 pass
                 #self.job_sequencing_func = complete_schedule.who_is_next()
             elif kwargs['sqc_rule'] == SQC_rule.GRB_scheduler: # or using mathematical optimization to produce dynamic schedule
-                self.central_scheduler = GurobiScheduler(**self.kwargs)
+                self.central_scheduler = CentralScheduler(**self.kwargs)
                 self.opt_mode = True
                 job_sequencing_func = self.central_scheduler.draw_from_schedule
                 self.logger.info("* Optimization mode is ON, A [centralized Gurobi scheduler] is created, all machines use a central schedule")
