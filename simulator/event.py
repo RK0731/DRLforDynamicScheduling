@@ -2,7 +2,7 @@ import numpy as np
 from tabulate import tabulate
 from .job import *
 from .sequencing_rule import *
-from .opt_scheduler import *
+from .scheduler import *
 
 '''
 The module that creates dynamic events 
@@ -53,8 +53,8 @@ class Narrator:
             if kwargs['sqc_rule'] == 'complete_schedule': # follow a complete schedule
                 pass
                 #self.job_sequencing_func = complete_schedule.who_is_next()
-            elif kwargs['sqc_rule'] == SQC_rule.opt_scheduler: # or using mathematical optimization to produce dynamic schedule
-                self.central_scheduler = OPT_scheduler(**self.kwargs)
+            elif kwargs['sqc_rule'] == SQC_rule.GRB_scheduler: # or using mathematical optimization to produce dynamic schedule
+                self.central_scheduler = GurobiScheduler(**self.kwargs)
                 self.opt_mode = True
                 job_sequencing_func = self.central_scheduler.draw_from_schedule
                 self.logger.info("* Optimization mode is ON, A [centralized Gurobi scheduler] is created, all machines use a central schedule")

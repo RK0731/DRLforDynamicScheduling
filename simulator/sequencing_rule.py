@@ -24,7 +24,7 @@ class SQC_rule:
     
     @classmethod 
     # dummy function, will use the draw_from_schedule function after creating a central scheduler object
-    def opt_scheduler(cls, jobs, *args, **kwargs): 
+    def GRB_scheduler(cls, jobs, *args, **kwargs): 
         pass
 
     @classmethod 

@@ -31,7 +31,7 @@ parser.add_argument('-draw', '--draw_gantt', default=5, action='store', type=int
 parser.add_argument('-save_gantt', default=True, action='store_false', help='Save the gantt chart?')
 
 # scheduler
-parser.add_argument('-sqc', '--sqc_rule', default= SQC_rule.opt_scheduler, type=lambda x:eval("SQC_rule."+str(x)), help='Sequencing rule or scheduler')
+parser.add_argument('-sqc', '--sqc_rule', default= SQC_rule.GRB_scheduler, type=lambda x:eval("SQC_rule."+str(x)), help='Sequencing rule or scheduler')
 
 # threading
 parser.add_argument('-multi_thread', default=False , action='store_true', help='Use this flag to create multiple threads/environments')
@@ -42,6 +42,7 @@ args = parser.parse_args()
 
 
 if __name__ == '__main__':
+    '''
     MainSimulatorProcessing(
         m_no = args.m_no, span = args.span, E_utliz = args.E_utliz,
         pt_range = args.pt_range, due_tightness = args.due_tightness, 
@@ -49,5 +50,16 @@ if __name__ == '__main__':
         machine_breakdown = args.machine_breakdown, MTBF = args.MTBF, MTTR = args.MTTR, 
         random_MTBF = args.random_MTBF, random_MTTR = args.random_MTTR,
         draw_gantt = args.draw_gantt, save_gantt = args.save_gantt, multi_thread = args.multi_thread, thread_no = args.thread_no,
+        sqc_rule = args.sqc_rule
+        )
+    '''
+
+    MainSimulator.run(
+        m_no = args.m_no, span = args.span, E_utliz = args.E_utliz,
+        pt_range = args.pt_range, due_tightness = args.due_tightness, 
+        processing_time_variability = args.processing_time_variability, pt_cv = args.pt_cv,
+        machine_breakdown = args.machine_breakdown, MTBF = args.MTBF, MTTR = args.MTTR, 
+        random_MTBF = args.random_MTBF, random_MTTR = args.random_MTTR,
+        draw_gantt = args.draw_gantt, save_gantt = args.save_gantt,
         sqc_rule = args.sqc_rule
         )

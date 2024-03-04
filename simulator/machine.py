@@ -44,9 +44,10 @@ class Machine:
         self.m_list = kwargs['machine_list']
         # specify the sequencing decision maker
         self.job_sequencing = kwargs['sqc_rule']
-        # should machine use pre-determined production schedule which allows strategic idleness
+        # follow a subset of centralized production schedule which allows strategic idleness
         # or act in a reactive way that always process the queuing job as soon as possible?
         self.schedule_mode = False
+        # [self.job_sequencing] is assigned by event.Narrator
         if self.job_sequencing.__name__ == "draw_from_schedule":
             self.schedule_mode = True
         # activate the produciton
@@ -69,7 +70,7 @@ class Machine:
             if self.schedule_mode:
                 # the returned value is the first job's index in pre-developed schedule
                 # i.e. the next job that should be processed by this machine
-                # WARNING: a sequencing decision has been made, we poped the first element from the schedule
+                # WARNING: a sequencing decision has been made, pop the first element from the schedule
                 self.next_job_in_schedule = self.job_sequencing(m_idx = self.m_idx)
                 # if the job in schedule is NOT in queue, activate the strategic idleness process
                 self.check_strategic_idleness()
@@ -80,8 +81,8 @@ class Machine:
                 self.recorder.sqc_occ_opt += 1
                 self.logger.info("{} > SCH: Machine {} picks Job {}".format(
                     self.env.now, self.m_idx, self.picked_j_instance.j_idx))
-            # TYPE II: if sequencing is completely reactive
-            # we have more than one queuing jobs, sequencing is required
+            # TYPE II: if sequencing is reactive
+            # and we have more than one queuing jobs, sequencing is required
             elif len(self.queue) > 1:
                 # the returned value is picked job's position in machine's queue
                 self.sqc_decision_pos = self.job_sequencing(jobs = self.queue)
@@ -143,7 +144,8 @@ class Machine:
         # suspend the production here, untill the working_event is triggered
         yield self.working_event
         self.breakdown_record.append([(self.m_idx, start, self.env.now - start)])
-        self.logger.info("{} > BKD off: Machine {} restored, delayed the production for {} units".format(self.env.now, self.m_idx, self.env.now - start))
+        self.logger.info("{} > BKD off: Machine {} repaired, delayed the production for {} units".format(
+            self.env.now, self.m_idx, self.env.now - start))
 
 
     # a new job (instance) arrives
@@ -158,10 +160,11 @@ class Machine:
             self.env.now, arriving_job.j_idx, self.m_idx, self.status, [j.j_idx for j in self.queue])
         extra_msg = ", next job in schedule: {}".format(self.next_job_in_schedule)
         self.logger.info(common_msg + extra_msg if self.schedule_mode else common_msg)
-        # if schedule mdoe is ON, need to check if arrived job match the required job, to reactivate machine from idleness
+        # if schedule mode is ON, need to check if arrived job match the required job
         if self.schedule_mode:
-            # check if arriving job match the [next_job_in_schedule]
+            # check if arriving job matches the [next_job_in_schedule]
             if arriving_job.j_idx == self.next_job_in_schedule:
+                # if so, end strategic idleness and reactivate machine
                 if not self.required_job_in_queue_event.triggered:
                     self.required_job_in_queue_event.succeed()
                     self.logger.info("{} > STR.IDL. off: Machine {} reactivated".format(self.env.now, self.m_idx))

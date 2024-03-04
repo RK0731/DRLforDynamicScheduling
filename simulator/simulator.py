@@ -12,25 +12,17 @@ import shutil
 from .job import *
 from .machine import *
 from .sequencing_rule import *
-from .event_narrator import *
-from .gantt_chart import *
+from .event import *
+from .painter import *
 
 
 class MainSimulator:
-    def __init__(self, **kwargs) -> None:
-        if kwargs['multi_thread'] == False:
-            spf = Shopfloor(**kwargs)
-            spf.run_simulation()
-        else:
-            # disable plotting
-            kwargs['draw_gantt'] = False
-            # create multiple threads
-            spf_dict = {}
-            sim_thread_dict = {}
-            for idx in range(1, kwargs['thread_no'] + 1):
-                spf_dict[idx] = Shopfloor(thread_idx = idx, **kwargs)
-                sim_thread_dict[idx] = threading.Thread(target=spf_dict[idx].run_simulation)
-                sim_thread_dict[idx].start()
+    @classmethod
+    def run(cls, **kwargs) -> None:
+        # create the shopfloor instance
+        spf = Shopfloor(**kwargs)
+        # run the simulation
+        spf.run_simulation()
 
 
 class MainSimulatorProcessing:
@@ -57,21 +49,11 @@ class Shopfloor:
         # STEP 1. important features shared by all machine and job instances
         self.env = simpy.Environment()
         self.kwargs = kwargs
-        # set logger
-        if "thread_idx" in kwargs:
-            self.logger = logging.getLogger("logger_"+str(kwargs['thread_idx']))
-            formatter = logging.Formatter("[T{}][%(module)+13s: %(lineno)-3d] %(levelname)-5s => %(message)s".format(kwargs['thread_idx']))
-            _fpath = Path("./log/multi_thread")
-            if not _fpath.exists(): _fpath.mkdir() 
-            filehandler = logging.FileHandler(_fpath / "sim_log_{}.log".format(kwargs['thread_idx']), 'w')
-            filehandler.setFormatter(formatter)
-            self.logger.addHandler(filehandler)
-            self.logger.setLevel(logging.DEBUG)
-        else:
-            with open(Path.cwd() / "config" / "logger_config.json") as f:
-                log_config = json.load(f)
-                logging.config.dictConfig(log_config)
-                self.logger = logging.getLogger("sim_logger")
+        # initialize the logger
+        with open(Path.cwd() / "config" / "logger_config.json") as f:
+            log_config = json.load(f)
+            logging.config.dictConfig(log_config)
+            self.logger = logging.getLogger("sim_logger")
         self.recorder = Recorder(**kwargs) # recorder object shared by all other objects
         # STEP 2. create machines
         self.m_list = []
@@ -94,8 +76,9 @@ class Shopfloor:
         if "keep" in self.kwargs and self.kwargs['keep']:
             ct = ''.join([str(x) for x in time.strftime("%Y,%m,%d,%H,%M,%S").split(',')])
             shutil.copy(Path.cwd() / "log" / "sim.log", Path.cwd() / "log" / "past" / "{}_sim.log".format(ct))
+        # whether to plot the gantt chart
         if "draw_gantt" in self.kwargs and self.kwargs['draw_gantt'] > 0:
-            painter = Draw(self.recorder, **self.kwargs)
+            draw_gantt_chart(self.recorder, **self.kwargs)
         return
 
     

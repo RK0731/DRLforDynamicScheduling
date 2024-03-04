@@ -8,7 +8,7 @@ import gurobipy as gp
 from gurobipy import GRB
 
 
-class OPT_scheduler:
+class GurobiScheduler:
     def __init__(self, *args, **kwargs):
         for k, v in kwargs.items():
             setattr(self, k, v)
@@ -17,7 +17,7 @@ class OPT_scheduler:
         # overwrite the gurobi log file
         open(Path.cwd() / "log" / "gurobi.log", 'w').close()
         # create an optimizer object
-        self.optimizer = Optimizer(self.env, self.logger, self.m_list)
+        self.optimizer = GurobiOptimizer(self.env, self.logger, self.m_list)
 
 
     def solve_problem(self, **kwargs):
@@ -120,7 +120,7 @@ class OPT_scheduler:
 
 
 
-class Optimizer:
+class GurobiOptimizer:
     def __init__(self, env, logger, m_list):
         self.env = env
         self.logger = logger
