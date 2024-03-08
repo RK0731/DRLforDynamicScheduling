@@ -23,8 +23,13 @@ class SQC_rule:
         return np.argmin(critical_ratio)
     
     @classmethod 
-    # dummy function, will use the draw_from_schedule function after creating a central scheduler object
-    def GRB_scheduler(cls, jobs, *args, **kwargs): 
+    # dummy function for Gurobi optimizer, will use the draw_from_schedule function after creating a central scheduler object
+    def GurobiOptimizer(cls, jobs, *args, **kwargs): 
+        pass
+
+    @classmethod 
+    # dummy function for Google OR-Tools, will use the draw_from_schedule function after creating a central scheduler object
+    def ORTools(cls, jobs, *args, **kwargs): 
         pass
 
     @classmethod 

@@ -59,7 +59,7 @@ class Shopfloor:
         self.m_list = []
         self.logger.debug("Creating {} machines on shopfloor ".format(kwargs['m_no']))
         for i in range(kwargs['m_no']):
-            self.m_list.append(Machine(env = self.env, logger = self.logger, recorder = self.recorder, m_idx=i, **kwargs))
+            self.m_list.append(Machine(env = self.env, logger = self.logger, recorder = self.recorder, m_idx = i, **kwargs))
         # STEP 3: create the event narrator of dynamic events
         self.logger.debug("Initializing event narrator, machine breakdown: {}, processing time variability: {}".format(kwargs['machine_breakdown'], kwargs['processing_time_variability']))
         self.narrator = Narrator(env = self.env, logger = self.logger, recorder = self.recorder, m_list = self.m_list, **kwargs)

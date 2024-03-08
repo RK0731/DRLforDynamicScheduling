@@ -4,20 +4,32 @@ from tabulate import tabulate
 import pandas as pd
 import numpy as np
 from pathlib import Path
+from typing import Dict, List, Tuple, Union, Literal
+import collections
+from ortools.sat.python import cp_model
 import gurobipy as gp
 from gurobipy import GRB
+
+from .job import Job
+from .machine import Machine
+from .sequencing_rule import *
 
 
 class CentralScheduler:
     def __init__(self, *args, **kwargs):
+        # map the keyword arguments and declare type if necessary
         for k, v in kwargs.items():
             setattr(self, k, v)
         self.schedule = {m.m_idx:[] for m in self.m_list}
-        self.in_system_jobs = self.recorder.in_system_jobs
+        # get jobs in system for scheduling
+        self.in_system_jobs:Dict[int, Job] = self.recorder.in_system_jobs
         # overwrite the gurobi log file
         open(Path.cwd() / "log" / "gurobi.log", 'w').close()
         # create an optimizer object
-        self.optimizer = GurobiOptimizer(self.env, self.logger, self.m_list)
+        if self.sqc_rule == SQC_rule.GurobiOptimizer:
+            self.scheduler = GurobiOptimizer
+        elif self.sqc_rule == SQC_rule.ORTools:
+            self.scheduler = ORTools
 
 
     def solve_problem(self, **kwargs):
@@ -30,7 +42,7 @@ class CentralScheduler:
         self.remaining_trajectories = {}
         self.remaining_pts = {}
         self.job_intersections = {}
-        # extract the trajectory and processing time info of jobs that not yet completed
+        # extract the remaining trajectory and processing time info of jobs that not yet completed
         for _j_idx, _job in self.in_system_jobs.items():
             if _job.status=='queuing':
                 self.remaining_trajectories[_j_idx] = _job.remaining_machines
@@ -38,18 +50,22 @@ class CentralScheduler:
             elif len(_job.remaining_machines) > 1: # excluding current machine if being processed
                 self.remaining_trajectories[_j_idx] = _job.remaining_machines[1:]
                 self.remaining_pts[_j_idx] = _job.remaining_pt[1:]
-        # get the intersection betwen jobs
+        # get the potential intersection betwen jobs' trajectory
+        # needed to configure the precedence constraints
         for pair in (itertools.combinations(self.remaining_trajectories.keys(), 2)):
             _rem_traj_1, _rem_traj_2 = self.remaining_trajectories[pair[0]], self.remaining_trajectories[pair[1]]
             _intersec = list(set(_rem_traj_1).intersection(_rem_traj_2))
             if len(_intersec):
                 self.job_intersections[pair] = _intersec
         #print(self.job_intersections)
-        # if more than one job but no intersection
+        # if more than one job but no intersection, no math programming is needed
         if len(self.job_intersections) == 0:
             self.solve_without_optimization()
+        # otherwise call the optimizer to solve the problem
         else:
-            _varOpBeginT = self.optimizer.solve_by_optimization(self.job_intersections, self.remaining_trajectories, self.in_system_jobs)
+            _varOpBeginT = self.scheduler.solve_scheduling_problem(
+                self.logger, self.env, self.m_list,
+                self.job_intersections, self.remaining_trajectories, self.in_system_jobs)
             self.convert_to_schedule(_varOpBeginT)
         self.recorder.opt_time_expense += (time.time() - _begin_T)
 
@@ -85,9 +101,13 @@ class CentralScheduler:
             # job's expected operation begin time in schedule
             self.j_op_by_schedule[_j_idx].append((_m_idx, round(T, 1)))
         self.logger.debug("New schedule: \n{}".format(tabulate([
-            ["Machine"]+list(self.schedule.keys()), ["Schedule"]+list(self.schedule.values()) ], headers="firstrow", tablefmt="psql")))
+            ["Machine"]+list(self.schedule.keys()), 
+            ["Schedule"]+list(self.schedule.values()) ], 
+            headers="firstrow", tablefmt="psql")))
         self.logger.debug("Jobs' operations in new schedule: \n{}".format(tabulate(
-            [["Job", "Operations (m_idx, opBeginT)"], *[[_j_idx, op] for _j_idx, op in self.j_op_by_schedule.items()]], headers="firstrow", tablefmt="psql")))
+            [["Job", "Operations (m_idx, opBeginT)"], 
+             *[[_j_idx, op] for _j_idx, op in self.j_op_by_schedule.items()]], 
+             headers="firstrow", tablefmt="psql")))
         self.update_machine_after_optimization()
 
 
@@ -120,20 +140,114 @@ class CentralScheduler:
 
 
 
-class GurobiOptimizer:
-    def __init__(self, env, logger, m_list):
-        self.env = env
-        self.logger = logger
-        self.m_list = m_list
-        self.grb_msg = {2:'optimal', 3:'infeasible', 4:'infeasible or unbounded', 9:'time limit', 11:'interrupted'}
-
-
-    def solve_by_optimization(self, job_intersections, remaining_trajectories:dict, in_system_jobs:dict):
-        _opt_start = time.time()
-        # get machines' release info
-        self.machine_release_T = {m.m_idx: max(m.release_T, self.env.now) for m in self.m_list}
+class ORTools:
+    @classmethod
+    def solve_scheduling_problem(cls, logger, env, m_list:List[Machine], 
+                                 job_intersections, remaining_trajectories:Dict[int, list], in_system_jobs:Dict[int, Job]
+                                 ):
+        START_T = time.time()
+        # get machines' release time info
+        machine_release_T = {m.m_idx: int(max(m.release_T, env.now)) for m in m_list}
         # get jobs' available time info
-        self.job_available_T = {_j_idx: max(in_system_jobs[_j_idx].available_T, self.env.now) for _j_idx in remaining_trajectories.keys()}
+        job_available_T = {_j_idx: int(max(in_system_jobs[_j_idx].available_T, env.now)) for _j_idx in remaining_trajectories.keys()}
+        # build the OR-Tools constrained programming model
+        model = cp_model.CpModel()
+        ''' 
+        PART I: create the variables and pairings
+        '''
+        # get the lower and upper limit for INT variables, which the sum of all remaining operations' pt
+        NOW = int(env.now)
+        UL = NOW + int(sum([sum(J.remaining_pt) for J in in_system_jobs.values()]))
+        # variable storage
+        all_jobs = {}
+        all_ops = {}
+        m_to_ops = {m.m_idx: [] for m in m_list}
+        job_tuple = collections.namedtuple("job", ['completion', 'discrepency', 'tardiness'])
+        op_tuple = collections.namedtuple("operation", ['begin', 'end', 'interval'])
+        # 1. job/operation/machine decision variables
+        for j_idx, traj in remaining_trajectories.items():
+            # operation-specific variables
+            for m_idx in traj:
+                suffix = f"_j{j_idx}_m{m_idx}"
+                # begin of operation j,m
+                _varOpBeginT = model.NewIntVar(NOW, UL, "varOpBeginT" + suffix)
+                # end of operation j,m
+                _varOpEndT = model.NewIntVar(NOW, UL, "varOpEndT" + suffix)
+                # the interval variable represeting operation j,m
+                _varOpInterval = model.NewIntervalVar(_varOpBeginT, in_system_jobs[j_idx].pt_by_m_idx[m_idx], _varOpEndT, 
+                                                      "varOpInterval" + suffix)
+                # store the variables
+                all_ops[j_idx, m_idx] = op_tuple(begin = _varOpBeginT, end = _varOpEndT, interval = _varOpInterval)
+                m_to_ops[m_idx].append(_varOpInterval)
+            # 2. job completion discrepency and tardiness
+            _varJobDiscrepency = model.NewIntVar(-1000, 1000, f"varJobDiscrepency_{j_idx}")
+            _varJobTardiness = model.NewIntVar(0, 1000, f"varJobTardiness_{j_idx}")
+            # store the completion, discrepency, and tardiness variables (dummy for now)
+            all_jobs[j_idx] = job_tuple(
+                completion = _varOpEndT, 
+                discrepency = _varJobDiscrepency,
+                tardiness = _varJobTardiness
+                )
+        # 3. schedule makespan, not adjusted by the starting time of a cycle
+        varMakespan = model.NewIntVar(NOW, UL, "varMakespan")
+        varCumTardiness = cp_model.LinearExpr.Sum([J.tardiness for J in all_jobs.values()])
+        logger.debug('Job in system: {}'.format(len(in_system_jobs)))
+        ''' 
+        PART II: specify the constraints
+        '''
+        for j_idx, traj in remaining_trajectories.items():
+            # 1. a job's operations must be processed following job's trajectory
+            for op_sqc in range(len(traj) -1):
+                model.Add(all_ops[j_idx, traj[op_sqc + 1]].begin >= all_ops[j_idx, traj[op_sqc]].end)
+            # 2. job cannot be processed bafore required machine is released or itself became available
+            # 2.1 job's all operations can be processed only after machine release
+            for m_idx in traj:
+                model.Add(all_ops[j_idx, m_idx].begin >= machine_release_T[m_idx])
+            # 2.2 job's first operation can be processed only when it becomes available
+            model.Add(all_ops[j_idx, traj[0]].begin >= job_available_T[j_idx])
+            # 2.3 calculate the completion time discrepency from job completion time
+            model.Add(all_jobs[j_idx].discrepency == all_jobs[j_idx].completion - int(in_system_jobs[j_idx].due))
+            # 2.4 calculate the tardiness from discrepency
+            model.AddMaxEquality(all_jobs[j_idx].tardiness, [0, all_jobs[j_idx].discrepency])
+        # 3. no overlaps amongst all operations for a machine
+        for machine in m_to_ops:
+            model.AddNoOverlap(m_to_ops[machine])
+        # 4. system-level performance variables 
+        # 4.1 cumulative tardiness
+        
+        # 4.2 the makespan of the schedule in this cycle
+        model.AddMaxEquality(varMakespan, [all_ops[j_idx, traj[-1]].end for j_idx, traj in remaining_trajectories.items()])
+        ''' 
+        PART III: specify the objective of optimization, and run the optimization
+        '''
+        model.Minimize(varCumTardiness)
+        solver = cp_model.CpSolver()
+        status = solver.Solve(model)
+        '''
+        PART IV: convert the gurobi tupledict to normal Python dict
+        '''
+        logger.debug("OR_Tools Programming Process elapsed, model status: {}, time expense: {}s".format(
+            solver.StatusName(status), round(time.time() - START_T, 3)))
+        # extract the value of varOpBeginT variables
+        converted_varOpBeginT = {key: solver.Value(op.begin) for key, op in all_ops.items()}
+        # return only the operation begin time to build the schedule
+        return converted_varOpBeginT
+
+
+
+
+
+class GurobiOptimizer:
+    @classmethod
+    def solve_scheduling_problem(cls, logger, env, m_list:List[Machine], 
+                                 job_intersections, remaining_trajectories:Dict[int, list], in_system_jobs:Dict[int, Job]
+                                 ):
+        grb_msg = {2:'optimal', 3:'infeasible', 4:'infeasible or unbounded', 9:'time limit', 11:'interrupted'}
+        START_T = time.time()
+        # get machines' release info
+        machine_release_T = {m.m_idx: max(m.release_T, env.now) for m in m_list}
+        # get jobs' available time info
+        job_available_T = {_j_idx: max(in_system_jobs[_j_idx].available_T, env.now) for _j_idx in remaining_trajectories.keys()}
         # build the optimization model
         with gp.Env(empty=True) as grb_env:
             grb_env.setParam('LogToConsole', 0)
@@ -176,7 +290,7 @@ class GurobiOptimizer:
                 # binary variable to indicate the precedence between job 1 and job 2 on a machine
                 # equals 0 if job 1 preceeds job 2 on that machine, 1 otherwise
                 varJobPrec = model.addVars(pairJobPrec, vtype=GRB.BINARY, name='varJobPrec')
-                self.logger.debug('Job in system: {}, Operation begin time pairs: {}, Job operations sequence pairs: {}, Job precedence pairs: {}'.format(
+                logger.debug('Job in system: {}, Operation begin time pairs: {}, Job operations sequence pairs: {}, Job precedence pairs: {}'.format(
                     len(in_system_jobs), len(pairOpBeginT), len(pairOpSqc), len(pairJobPrec)))
                 ''' 
                 PART II: specify the constraints
@@ -188,11 +302,11 @@ class GurobiOptimizer:
                 # 2. job cannot be processed bafore required machine is released or itself became available
                 # 2.1 job's all operations can be processed only after machine release
                 constrMachineRelease = model.addConstrs(
-                    (varOpBeginT[j, m] >= self.machine_release_T[m] for j, m in pairOpBeginT),
+                    (varOpBeginT[j, m] >= machine_release_T[m] for j, m in pairOpBeginT),
                     name = 'constrMachineRelease')
                 # 2.2 job's first operation can be processed only itself becomes available
                 constrJobAvailable = model.addConstrs(
-                    (varOpBeginT[j, m] >= self.job_available_T[j] for j, m in pairJobFirstOp),
+                    (varOpBeginT[j, m] >= job_available_T[j] for j, m in pairJobFirstOp),
                     name = 'constrJobAvailable')
                 # 3. all operations must be processed following the precedence relations between jobs
                 # 3.1 if job 1 preceeds job 2 <--> precedence variable = 0
@@ -239,8 +353,8 @@ class GurobiOptimizer:
                 '''
                 PART IV: convert the gurobi tupledict to normal Python dict
                 '''
-                self.logger.debug("Optimization elapsed, model status: {}, time expense: {}s".format(
-                    self.grb_msg[model.status], round(time.time() - _opt_start, 3)))
+                logger.debug("Optimization elapsed, model status: {}, time expense: {}s".format(
+                    grb_msg[model.status], round(time.time() - START_T, 3)))
                 # extract the value of varOpBeginT variables
                 converted_varOpBeginT = {key: var.X for key, var in varOpBeginT.items()}
         # return only the operation begin time to build the schedule

@@ -1,8 +1,11 @@
 import numpy as np
 from tabulate import tabulate
-from .job import *
+import time
+from typing import Dict, List, Tuple, Union, Literal
+
+from .job import Job
 from .sequencing_rule import *
-from .scheduler import *
+from .scheduler import CentralScheduler
 
 '''
 The module that creates dynamic events 
@@ -19,7 +22,7 @@ class Narrator:
         self.kwargs = kwargs
         self.logger.debug("Event narrator created")
         # specify the random seed
-        if 'seed' in kwargs:
+        if ('seed' in kwargs) and (kwargs['seed'] != 0):
             self.logger.debug("Random seed is specified, seed: {}".format(kwargs['seed']))
         else:
             self.seed = np.random.randint(0, 1e10)
@@ -53,7 +56,7 @@ class Narrator:
             if kwargs['sqc_rule'] == 'complete_schedule': # follow a complete schedule
                 pass
                 #self.job_sequencing_func = complete_schedule.who_is_next()
-            elif kwargs['sqc_rule'] == SQC_rule.GRB_scheduler: # or using mathematical optimization to produce dynamic schedule
+            elif (kwargs['sqc_rule'] == SQC_rule.GurobiOptimizer) or (kwargs['sqc_rule'] == SQC_rule.ORTools): # or using mathematical optimization to produce dynamic schedule
                 self.central_scheduler = CentralScheduler(**self.kwargs)
                 self.opt_mode = True
                 job_sequencing_func = self.central_scheduler.draw_from_schedule
@@ -239,6 +242,7 @@ class Narrator:
 
 
 
+
 # Retain all records
 class Recorder:
     def __init__(self, **kwargs):
@@ -249,7 +253,7 @@ class Recorder:
         # count occurance of sequencing decisions
         self.sqc_occ_opt = self.sqc_occ_SI = self.sqc_occ_reactive = self.sqc_occ_passive = 0
         # record the job's journey
-        self.in_system_jobs = {}
+        self.in_system_jobs:Dict[int, Job] = {}
         self.j_operation_dict = {}
         self.j_tardiness_dict = {}
         self.j_flowtime_dict = {}
