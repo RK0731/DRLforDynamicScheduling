@@ -74,12 +74,15 @@ class Machine:
                 # i.e. the next job that should be processed by this machine
                 # WARNING: a sequencing decision has been made, pop the first element from the schedule
                 self.next_job_in_schedule = self.job_sequencing(m_idx = self.m_idx)
-                # if the job in schedule is NOT in queue, activate the strategic idleness process
+                # if the next job in schedule is NOT in queue, activate the strategic idleness process
                 self.check_strategic_idleness()
                 yield self.required_job_in_queue_event
-                # when job required is in queue (with ot without strategic idleness)
-                self.sqc_decision_pos = [j.j_idx for j in self.queue].index(self.next_job_in_schedule)
-                self.picked_j_instance = self.queue[self.sqc_decision_pos]
+                try:
+                    # when job required is in queue (with ot without strategic idleness)
+                    self.sqc_decision_pos = [j.j_idx for j in self.queue].index(self.next_job_in_schedule)
+                    self.picked_j_instance = self.queue[self.sqc_decision_pos]
+                except ValueError as e:
+                    raise InvalidRequestError(f"Machine {self.m_idx} trying to pick Job {self.next_job_in_schedule} that is not in queue!")
                 self.recorder.sqc_cnt_opt += 1
                 _decision_type = 'Scheduled'
             # TYPE II: if sequencing is reactive
@@ -102,8 +105,9 @@ class Machine:
             # update job instance, and get the time of operation
             self.status = "processing"
             actual_pt = self.after_decision()
-            self.logger.debug("{}. Machine {} process Job {}, expected PT: {}, actual: {}".format(
-                _decision_type, self.m_idx, self.picked_j_instance.j_idx, self.picked_j_instance.remaining_operations[0][1], actual_pt))
+            self.logger.debug("{} > {}. Machine {} process Job {}, expected PT: {}, actual: {}".format(
+                self.env.now, _decision_type, self.m_idx, self.picked_j_instance.j_idx, 
+                self.picked_j_instance.remaining_operations[0][1], actual_pt))
             # The production process (yield the actual processing time of operation)
             yield self.env.timeout(actual_pt)
             self.logger.info("{} > DEP: Job {} departs Machine {}".format(
@@ -115,12 +119,12 @@ class Machine:
             self.after_operation()
             # check if machine is shut down/broken
             if not self.working_event.triggered:
-                self.status = "down"
                 yield self.env.process(self.process_breakdown())
             # check the stock level
             if len(self.queue) == 0:
                 self.status = "idle"
                 yield self.env.process(self.process_idle())
+            #yield self.env.timeout(0)
     
 
     # when there's no job queueing, machine becomes idle
@@ -138,7 +142,6 @@ class Machine:
 
     # or when machine failure happens
     def process_breakdown(self):
-        self.logger.info("{} > BKD on: Machine {} is broken".format(self.env.now, self.m_idx))
         start = self.env.now
         # suspend the production here, untill the working_event is triggered
         yield self.working_event

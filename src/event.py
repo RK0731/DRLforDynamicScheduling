@@ -96,8 +96,8 @@ class Narrator:
         trajectory_seed = np.arange(self.m_no)
         while self.j_idx < self.total_no:
             # draw the interval from pre-produced list
-            time_interval = self.arrival_interval[self.j_idx]
-            yield self.env.timeout(time_interval)
+            job_arrival_interval = self.arrival_interval[self.j_idx]
+            yield self.env.timeout(job_arrival_interval)
             # produce the trajectory of job, by shuffling the sequence seed
             self.rng.shuffle(trajectory_seed)
             # randomly a produce processing time array of job, this is THEORATICAL value, not actual value if variance exists
@@ -107,12 +107,14 @@ class Narrator:
                 env = self.env, logger = self.logger, recorder = self.recorder, rng = self.rng,
                 j_idx = self.j_idx, trajectory = trajectory_seed.copy(), pt_by_m_idx = ptl.copy(),
                 pt_range = self.pt_range, pt_cv = self.pt_cv, due_tightness = self.due_tightness)
-            # track thjis job
+            # track this job
             self.recorder.in_system_jobs[self.j_idx] = job_instance
             # build a new schedule if optimization mode is on
+            yield self.env.timeout(0)
             if self.opt_mode:
-                self.logger.debug("New job arrived, call central scheduler to build schedule\n"+"-"*88)
-                self.central_scheduler.solve_problem()
+                if not self.central_scheduler.build_schedule_event.triggered:
+                    self.central_scheduler.build_schedule_event.succeed()
+                    self.logger.debug("New job arrived, call central scheduler to build schedule\n"+"-"*88)
             # after creating a job, assign it to the first machine along its trajectory
             first_m = trajectory_seed[0]
             self.m_list[first_m].job_arrival(job_instance)
@@ -125,28 +127,32 @@ class Narrator:
         while self.env.now < self.span:
             # draw the time interval between two break downs and the down time
             if random_MTBF:
-                time_interval = np.around(self.rng.exponential(self.MTBF), decimals = 1)
+                MTBF_interval = np.around(self.rng.exponential(self.MTBF), decimals = 1)
             else:
-                time_interval = self.MTBF
+                MTBF_interval = self.MTBF
             if random_MTTR:
-                bkd_t = np.around(self.rng.uniform(self.MTTR*0.5, self.MTTR*1.5), decimals = 1)
+                bkd_t = np.around(self.rng.uniform(self.MTTR * 0.5, self.MTTR * 1.5), decimals = 1)
             else:
                 bkd_t = self.MTTR
             # if machine is currently running, the breakdown will commence after current operation
             # but get the actual beging and end time first
-            yield self.env.timeout(time_interval)
+            yield self.env.timeout(MTBF_interval)
             actual_begin = max(self.m_list[m_idx].hidden_release_T, self.env.now)
             actual_end = actual_begin + bkd_t
-            # when we reach the actual breakdown time
+            # wait till actual breakdown time
             yield self.env.timeout(actual_begin - self.env.now)
+            # when we reach the actual breakdown time
             self.m_list[m_idx].working_event = self.env.event()
-            # summation of actual begin time and expected down time (MTTR)
+            # restoration time is the sum of actual begin time and expected down time (MTTR)
             self.m_list[m_idx].release_T = actual_begin + self.MTTR
+            self.m_list[m_idx].status = "down"
+            self.logger.debug("{} > BKD on: Machine {} will be down for {}, till {}".format(self.env.now, m_idx, bkd_t, actual_begin + self.MTTR) 
+                              + ". Call central scheduler to rebuild the schedule" if self.opt_mode else "")
+            #yield self.env.timeout(0)
             # rebuild schedule if necessary
             if self.opt_mode:
-                self.central_scheduler.solve_problem()
-            self.logger.debug("{} > BKD: Machine {} will be down for {}".format(self.env.now, m_idx, bkd_t) 
-                              + ". Call central scheduler to rebuild the schedule" if self.opt_mode else "")
+                if not self.central_scheduler.build_schedule_event.triggered:
+                    self.central_scheduler.build_schedule_event.succeed()
             # time of breakdown
             yield self.env.timeout(actual_end - self.env.now)
             self.recorder.m_bkd_dict[m_idx].append([actual_begin, actual_end])
@@ -177,7 +183,7 @@ class Narrator:
                             *[[_j_idx, description] for _j_idx, description in _mismatch.items()]],
                             headers="firstrow", tablefmt="psql")))
         # simulation configurations to be printed in console
-        header = ["Category", "Number", "Attributes"]
+        header = ["Category", "Number", "Details"]
         # machine breakdown info
         if self.machine_breakdown:
             m_config = ["Machine", self.m_no, "Machine Breakdown: {}".format(self.machine_breakdown)]

@@ -26,49 +26,58 @@ class CentralScheduler:
         self.in_system_jobs:Dict[int, Job] = self.recorder.in_system_jobs
         # overwrite the gurobi log file
         open(Path.cwd() / "log" / "gurobi.log", 'w').close()
+        # create the event
+        self.build_schedule_event = self.env.event()
         # create an optimizer object
         if self.sqc_rule == SQC_rule.GurobiOptimizer:
             self.scheduler = GurobiOptimizer
         elif self.sqc_rule == SQC_rule.ORTools:
             self.scheduler = ORTools
+        # process the build schedule process
+        self.env.process(self.solve_problem_process())
 
 
-    def solve_problem(self, **kwargs):
-        _begin_T = time.time()
-        # if there's only one job in system
-        if len(self.in_system_jobs) == 1:
-            self.solve_without_optimization()
-            return
-        # if more than one jobs in system, get remaining operations' info, and check the intersection between them
-        self.remaining_trajectories = {}
-        self.remaining_pts = {}
-        self.job_intersections = {}
-        # extract the remaining trajectory and processing time info of jobs that not yet completed
-        for _j_idx, _job in self.in_system_jobs.items():
-            if _job.status=='queuing':
-                self.remaining_trajectories[_j_idx] = _job.remaining_machines
-                self.remaining_pts[_j_idx] = _job.remaining_pt
-            elif len(_job.remaining_machines) > 1: # excluding current machine if being processed
-                self.remaining_trajectories[_j_idx] = _job.remaining_machines[1:]
-                self.remaining_pts[_j_idx] = _job.remaining_pt[1:]
-        # get the potential intersection betwen jobs' trajectory
-        # needed to configure the precedence constraints
-        for pair in (itertools.combinations(self.remaining_trajectories.keys(), 2)):
-            _rem_traj_1, _rem_traj_2 = self.remaining_trajectories[pair[0]], self.remaining_trajectories[pair[1]]
-            _intersec = list(set(_rem_traj_1).intersection(_rem_traj_2))
-            if len(_intersec):
-                self.job_intersections[pair] = _intersec
-        #print(self.job_intersections)
-        # if more than one job but no intersection, no math programming is needed
-        if len(self.job_intersections) == 0:
-            self.solve_without_optimization()
-        # otherwise call the optimizer to solve the problem
-        else:
-            _varOpBeginT = self.scheduler.solve_scheduling_problem(
-                self.logger, self.env, self.m_list,
-                self.job_intersections, self.remaining_trajectories, self.in_system_jobs)
-            self.convert_to_schedule(_varOpBeginT)
-        self.recorder.opt_time_expense += (time.time() - _begin_T)
+    def solve_problem_process(self):
+        while True:
+            yield self.build_schedule_event
+            _begin_T = time.time()
+            # if there's only one job in system
+            if len(self.in_system_jobs) == 1:
+                self.solve_without_optimization()
+            # if more than one jobs in system, get remaining operations' info, and check the intersection between them
+            else:
+                self.remaining_trajectories = {}
+                self.remaining_pts = {}
+                self.job_intersections = {}
+                # extract the remaining trajectory and processing time info of jobs that not yet completed
+                for _j_idx, _job in self.in_system_jobs.items():
+                    if _job.status=='queuing':
+                        self.remaining_trajectories[_j_idx] = _job.remaining_machines
+                        self.remaining_pts[_j_idx] = _job.remaining_pt
+                    elif len(_job.remaining_machines) > 1: # excluding current machine if being processed
+                        self.remaining_trajectories[_j_idx] = _job.remaining_machines[1:]
+                        self.remaining_pts[_j_idx] = _job.remaining_pt[1:]
+                # get the potential intersection between jobs' trajectory
+                # needed to configure the precedence constraints
+                for pair in (itertools.combinations(self.remaining_trajectories.keys(), 2)):
+                    _rem_traj_1, _rem_traj_2 = self.remaining_trajectories[pair[0]], self.remaining_trajectories[pair[1]]
+                    _intersec = list(set(_rem_traj_1).intersection(_rem_traj_2))
+                    if len(_intersec):
+                        self.job_intersections[pair] = _intersec
+                #print(self.job_intersections)
+                # if more than one job but no intersection, no math programming is needed
+                if len(self.job_intersections) == 0:
+                    self.solve_without_optimization()
+                # otherwise call the optimizer to solve the problem
+                else:
+                    _varOpBeginT = self.scheduler.solve_scheduling_problem(
+                        self.logger, self.env, self.m_list,
+                        self.job_intersections, self.remaining_trajectories, self.in_system_jobs)
+                    self.convert_to_schedule(_varOpBeginT)
+                self.recorder.opt_time_expense += (time.time() - _begin_T)
+            # de-activate the build schedule event
+            self.build_schedule_event = self.env.event()
+            
 
 
     # no intersection between jobs, no optimization 
@@ -101,10 +110,12 @@ class CentralScheduler:
             self.schedule[_m_idx].append(_j_idx)
             # job's expected operation begin time in schedule
             self.j_op_by_schedule[_j_idx].append((_m_idx, round(T, 1)))
-        self.logger.debug("New schedule: \n{}".format(tabulate([
-            ["Machine"]+list(self.schedule.keys()), 
-            ["Schedule"]+list(self.schedule.values()) ], 
-            headers="firstrow", tablefmt="psql")))
+        # log the machines' sequence
+        self.logger.debug("Machines' sequence in new schedule: \n{}".format(tabulate(
+            [["M.idx", "Job sequence"], 
+             *self.schedule.items()], 
+             headers="firstrow", tablefmt="psql")))
+        # log jobs' operations
         self.logger.debug("Jobs' operations in new schedule: \n{}".format(tabulate(
             [["Job", "Operations (m_idx, opBeginT)"], 
              *[[_j_idx, op] for _j_idx, op in self.j_op_by_schedule.items()]], 
