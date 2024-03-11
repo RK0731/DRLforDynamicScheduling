@@ -2,8 +2,9 @@
 
 import argparse
 from pathlib import Path
-from simulator.sequencing_rule import *
-from simulator.simulator import *
+
+from src.sequencing_rule import *
+from src.simulator import *
 
 parser = argparse.ArgumentParser(description='demonstration')
 
@@ -26,9 +27,10 @@ parser.add_argument('-rnd_mtbf', '--random_MTBF', default=False, action='store_t
 parser.add_argument('-mttr', '--MTTR', default=10, help='Mean time to repair')
 parser.add_argument('-rnd_mttr', '--random_MTTR', default=False, action='store_true', help='Use random MTTR')
 
-# plotting settings
+# logging and plotting settings
 parser.add_argument('-draw', '--draw_gantt', default=5, action='store', type=int, help='Any value greater than 0 would plot the gantt chart, always no-show when simulation span is longer than 200')
 parser.add_argument('-save_gantt', default=True, action='store_false', help='Save the gantt chart?')
+parser.add_argument('-v', '--verbose', default='Debug', action='store', type=str, choices=['Debug','Info','Warning','Error'], help='Log level to show in console')
 
 # scheduler
 parser.add_argument('-sqc', '--sqc_rule', default= SQC_rule.ORTools, help='Sequencing rule or scheduler')

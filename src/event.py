@@ -6,6 +6,7 @@ from typing import Dict, List, Tuple, Union, Literal
 from .job import Job
 from .sequencing_rule import *
 from .scheduler import CentralScheduler
+from .exc import *
 
 '''
 The module that creates dynamic events 
@@ -60,7 +61,7 @@ class Narrator:
                 self.central_scheduler = CentralScheduler(**self.kwargs)
                 self.opt_mode = True
                 job_sequencing_func = self.central_scheduler.draw_from_schedule
-                self.logger.info("* Optimization mode is ON, A [centralized Gurobi scheduler] is created, all machines use a central schedule")
+                self.logger.info(f"Optimization mode is ON, A [centralized {self.sqc_rule} scheduler] is created, all machines use a central schedule")
             else: # otherwise a valid sequencing rule must be specified
                 job_sequencing_func = kwargs['sqc_rule']
                 self.logger.info("Machine use [{}] sequencing rule".format(job_sequencing_func.__name__))
@@ -136,15 +137,16 @@ class Narrator:
             yield self.env.timeout(time_interval)
             actual_begin = max(self.m_list[m_idx].hidden_release_T, self.env.now)
             actual_end = actual_begin + bkd_t
-            # then when we arrive at the actual breakdown time
+            # when we reach the actual breakdown time
             yield self.env.timeout(actual_begin - self.env.now)
             self.m_list[m_idx].working_event = self.env.event()
-            self.logger.debug("{} > BKD: mahcine {} will be down for {}".format(self.env.now, m_idx, bkd_t))
             # summation of actual begin time and expected down time (MTTR)
             self.m_list[m_idx].release_T = actual_begin + self.MTTR
+            # rebuild schedule if necessary
             if self.opt_mode:
-                self.logger.debug("Machine breakdown, call central scheduler to rebuild schedule")
                 self.central_scheduler.solve_problem()
+            self.logger.debug("{} > BKD: Machine {} will be down for {}".format(self.env.now, m_idx, bkd_t) 
+                              + ". Call central scheduler to rebuild the schedule" if self.opt_mode else "")
             # time of breakdown
             yield self.env.timeout(actual_end - self.env.now)
             self.recorder.m_bkd_dict[m_idx].append([actual_begin, actual_end])
@@ -160,7 +162,6 @@ class Narrator:
         # mismatch doesn't mean simulation failed, but indicate likely "under-optimization"
         # only meaningful when processing variablity and breakdown time (if any) variablity are 0
         if self.opt_mode and self.pt_cv == 0 and (self.machine_breakdown and self.random_MTTR) == False:
-            self.logger.debug("Schedule <-> Execution match check needed")
             _mismatch = {}
             for _j_idx, ops in self.central_scheduler.j_op_by_schedule.items():
                 compare = zip(ops, self.recorder.j_operation_dict[_j_idx][-len(ops):])
@@ -171,7 +172,7 @@ class Narrator:
                         except:
                             _mismatch[_j_idx] = ["M{}, ET:{}, AT:{}".format(E[0], E[1], A[1])]
             if len(_mismatch): 
-                self.logger.warning("Schedule and execution MISMATCH!:\n{}\n".format(
+                self.logger.warning("Schedule and execution MISMATCH:\n{}\n".format(
                     tabulate([["Job", "Mismatch"],
                             *[[_j_idx, description] for _j_idx, description in _mismatch.items()]],
                             headers="firstrow", tablefmt="psql")))
@@ -196,9 +197,9 @@ class Narrator:
         # sequencing decision maker
         sqc_config = ['Sqc', "N.A.", self.sqc_rule.__name__]
         if self.opt_mode:
-            sqc_config[-1] += "\nTotal: {}, Strategic idleness: {}".format(self.recorder.sqc_occ_opt, self.recorder.sqc_occ_SI)
+            sqc_config[-1] += "\nTotal: {}, Strategic idleness: {}".format(self.recorder.sqc_cnt_opt, self.recorder.sqc_cnt_SI)
         else:
-            sqc_config[-1] += "\nReactive: {}, Passive: {}".format(self.recorder.sqc_occ_reactive, self.recorder.sqc_occ_passive)
+            sqc_config[-1] += "\nReactive: {}, Passive: {}".format(self.recorder.sqc_cnt_reactive, self.recorder.sqc_cnt_passive)
         # simulation info
         avg_cum_m_run_T = sum([m.cumulative_runtime for m in self.m_list]) / self.m_no / self.recorder.last_job_comp_T
         sim_config = ["Sim", "N.A.", "Span: {}, Actual: {}\nUtilization: Expected: {}%, Actual: {}%\nRandom seed: {} / {}".format(
@@ -206,9 +207,9 @@ class Narrator:
         if self.opt_mode:
             tt= time.time()-self.program_start_T
             opt_tt = self.recorder.opt_time_expense
-            sim_config[-1]+= "\nTime: Toal: {}s, OPT: {}s, {}%".format(round(tt,2), round(opt_tt,2), round(100*(opt_tt/tt),1))
+            sim_config[-1]+= "\nWall Time: {}s, Opt.: {}s, {}%".format(round(tt,2), round(opt_tt,2), round(100*(opt_tt/tt),1))
         else:
-            sim_config[-1]+= "\nTime: {}s".format(round(time.time()-self.program_start_T,2))
+            sim_config[-1]+= "\nWall Time: {}s".format(round(time.time()-self.program_start_T,2))
         # print to console
         self.logger.info('Simulation Configurations:\n{}\n'.format(
             tabulate([header, m_config, j_config, sqc_config, sim_config],
@@ -251,7 +252,7 @@ class Recorder:
         # sim data
         self.opt_time_expense = 0
         # count occurance of sequencing decisions
-        self.sqc_occ_opt = self.sqc_occ_SI = self.sqc_occ_reactive = self.sqc_occ_passive = 0
+        self.sqc_cnt_opt = self.sqc_cnt_SI = self.sqc_cnt_reactive = self.sqc_cnt_passive = 0
         # record the job's journey
         self.in_system_jobs:Dict[int, Job] = {}
         self.j_operation_dict = {}

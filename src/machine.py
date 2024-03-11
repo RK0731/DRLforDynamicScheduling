@@ -9,6 +9,7 @@ from typing import Optional, Union, Literal, Any
 import simpy
 import numpy as np
 from .sequencing_rule import *
+from .exc import *
 
 
 class Machine:
@@ -66,6 +67,7 @@ class Machine:
             """
             # record the time of the sequencing decision, used as the index of produciton record in job creator
             self.decision_T = self.env.now
+            _decision_type = None
             # TYPE I: if strategic idleness is allowed
             if self.schedule_mode:
                 # the returned value is the first job's index in pre-developed schedule
@@ -78,36 +80,33 @@ class Machine:
                 # when job required is in queue (with ot without strategic idleness)
                 self.sqc_decision_pos = [j.j_idx for j in self.queue].index(self.next_job_in_schedule)
                 self.picked_j_instance = self.queue[self.sqc_decision_pos]
-                self.recorder.sqc_occ_opt += 1
-                self.logger.info("{} > SCH: Machine {} picks Job {}".format(
-                    self.env.now, self.m_idx, self.picked_j_instance.j_idx))
+                self.recorder.sqc_cnt_opt += 1
+                _decision_type = 'Scheduled'
             # TYPE II: if sequencing is reactive
             # and we have more than one queuing jobs, sequencing is required
             elif len(self.queue) > 1:
                 # the returned value is picked job's position in machine's queue
                 self.sqc_decision_pos = self.job_sequencing(jobs = self.queue)
                 self.picked_j_instance = self.queue[self.sqc_decision_pos]
-                self.recorder.sqc_occ_reactive += 1
-                self.logger.info("{} > SQC (Reactive): Machine {} picks Job {}".format(
-                    self.env.now, self.m_idx, self.picked_j_instance.j_idx))
+                self.recorder.sqc_cnt_reactive += 1
+                _decision_type = 'Reactive'
             # otherwise simply select the first(only) one
             else:
                 self.sqc_decision_pos = 0
                 self.picked_j_instance = self.queue[self.sqc_decision_pos]
-                self.recorder.sqc_occ_passive += 1
-                self.logger.info("{} > SQC off (Reactive): Machine {} processes Job {}".format(
-                    self.env.now, self.m_idx, self.picked_j_instance.j_idx))
+                self.recorder.sqc_cnt_passive += 1
+                _decision_type = 'Passive'
             """
             PART II. after the decision, update infromation and perform the operation
             """
             # update job instance, and get the time of operation
             self.status = "processing"
             actual_pt = self.after_decision()
-            self.logger.debug("Job {} on Machine {} proc.t, expected: {}, actual: {}".format(
-                self.picked_j_instance.j_idx, self.m_idx, self.picked_j_instance.remaining_operations[0][1], actual_pt))
+            self.logger.debug("{}. Machine {} process Job {}, expected PT: {}, actual: {}".format(
+                _decision_type, self.m_idx, self.picked_j_instance.j_idx, self.picked_j_instance.remaining_operations[0][1], actual_pt))
             # The production process (yield the actual processing time of operation)
             yield self.env.timeout(actual_pt)
-            self.logger.info("{} > DEP: Job {} departs from Machine {}".format(
+            self.logger.info("{} > DEP: Job {} departs Machine {}".format(
                 self.env.now, self.picked_j_instance.j_idx, self.m_idx))
             """
             PART III: after operation, update information and check for machine breakdown and idleness
@@ -167,7 +166,7 @@ class Machine:
                 # if so, end strategic idleness and reactivate machine
                 if not self.required_job_in_queue_event.triggered:
                     self.required_job_in_queue_event.succeed()
-                    self.logger.info("{} > STR.IDL. off: Machine {} reactivated".format(self.env.now, self.m_idx))
+                    self.logger.info("{} > Str.Idle end: Machine {} reactivated".format(self.env.now, self.m_idx))
 
 
     # suspend the machine if strategic idleness is needed
@@ -179,7 +178,7 @@ class Machine:
         # otherwise need to wait for the arrival of required job
         else:
             self.status = "strategic_idle" # and change the status
-            self.recorder.sqc_occ_SI += 1
+            self.recorder.sqc_cnt_SI += 1
             self.logger.info("{} > STR.IDL. on: Machine {} suspended, waiting for Job {}, current queue: {}".format(
                 self.env.now, self.m_idx, self.next_job_in_schedule, [j.j_idx for j in self.queue]))
             self.required_job_in_queue_event = self.env.event()

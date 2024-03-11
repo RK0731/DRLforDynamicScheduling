@@ -9,11 +9,14 @@ import time
 import json
 from pathlib import Path
 import shutil
+import traceback
+
 from .job import *
 from .machine import *
 from .sequencing_rule import *
 from .event import *
 from .painter import *
+from .exc import *
 
 
 class MainSimulator:
@@ -66,20 +69,22 @@ class Shopfloor:
 
     
     def run_simulation(self):
-        self.check_settings()
-        _start_T = time.time()
-        self.logger.info("Simulation starts at: {}".format(time.strftime("%Y-%m-%d, %H:%M:%S")))
-        self.env.run(until=self.kwargs['span']+1000)
-        self.logger.info("Program elapsed after {}s".format(round(time.time()-_start_T,5)))
-        self.narrator.post_simulation()
-        # if the simulation completed without error and "keep" mode is activated, copy the log file to storage
-        if "keep" in self.kwargs and self.kwargs['keep']:
-            ct = ''.join([str(x) for x in time.strftime("%Y,%m,%d,%H,%M,%S").split(',')])
-            shutil.copy(Path.cwd() / "log" / "sim.log", Path.cwd() / "log" / "past" / "{}_sim.log".format(ct))
-        # whether to plot the gantt chart
-        if "draw_gantt" in self.kwargs and self.kwargs['draw_gantt'] > 0:
-            draw_gantt_chart(self.recorder, **self.kwargs)
-        return
+        try:
+            self.check_settings()
+            _start_T = time.time()
+            self.logger.info("Simulation starts at: {}".format(time.strftime("%Y-%m-%d, %H:%M:%S")))
+            self.env.run(until=self.kwargs['span']+1000)
+            self.logger.info("Program elapsed after {}s".format(round(time.time()-_start_T,5)))
+            self.narrator.post_simulation()
+            # if the simulation completed without error and "keep" mode is activated, copy the log file to storage
+            if "keep" in self.kwargs and self.kwargs['keep']:
+                ct = ''.join([str(x) for x in time.strftime("%Y,%m,%d,%H,%M,%S").split(',')])
+                shutil.copy(Path.cwd() / "log" / "sim.log", Path.cwd() / "log" / "past" / "{}_sim.log".format(ct))
+            # whether to plot the gantt chart
+            if "draw_gantt" in self.kwargs and self.kwargs['draw_gantt'] > 0:
+                draw_gantt_chart(self.recorder, **self.kwargs)
+        except Exception as e:
+            self.logger.error(f"Simulation failed due to following exception:\n{str(traceback.format_exc())}")
 
     
     def check_settings(self):

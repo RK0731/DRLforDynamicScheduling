@@ -13,6 +13,7 @@ from gurobipy import GRB
 from .job import Job
 from .machine import Machine
 from .sequencing_rule import *
+from .exc import *
 
 
 class CentralScheduler:
@@ -84,7 +85,7 @@ class CentralScheduler:
                 self.schedule[_m_idx] = [_j_idx]
         # if there is a valid schedule
         if [sch for sch in self.schedule.values() if sch != []]:
-            self.logger.info("{} > OPT off. New schedule: \n{}".format(self.env.now, tabulate([
+            self.logger.info("{} > Passive schedule: \n{}".format(self.env.now, tabulate([
                 ["Machine"]+list(self.schedule.keys()), ["Schedule"]+list(self.schedule.values())], headers="firstrow", tablefmt="psql")))
 
 
@@ -214,9 +215,8 @@ class ORTools:
             model.AddNoOverlap(m_to_ops[machine])
         # 4. system-level performance variables 
         # 4.1 cumulative tardiness
-        
         # 4.2 the makespan of the schedule in this cycle
-        model.AddMaxEquality(varMakespan, [all_ops[j_idx, traj[-1]].end for j_idx, traj in remaining_trajectories.items()])
+        #model.AddMaxEquality(varMakespan, [all_ops[j_idx, traj[-1]].end for j_idx, traj in remaining_trajectories.items()])
         ''' 
         PART III: specify the objective of optimization, and run the optimization
         '''
@@ -226,7 +226,7 @@ class ORTools:
         '''
         PART IV: convert the gurobi tupledict to normal Python dict
         '''
-        logger.debug("OR_Tools Programming Process elapsed, model status: {}, time expense: {}s".format(
+        logger.debug("OR_Tools CP Model solving process elapsed, model status: {}, time expense: {}s".format(
             solver.StatusName(status), round(time.time() - START_T, 3)))
         # extract the value of varOpBeginT variables
         converted_varOpBeginT = {key: solver.Value(op.begin) for key, op in all_ops.items()}
