@@ -13,7 +13,7 @@ from gurobipy import GRB
 
 from .job import Job
 from .machine import Machine
-from .sequencing_rule import *
+from .sequencing_rule import SequencingMethod
 from .exc import *
 
 
@@ -25,16 +25,15 @@ class CentralScheduler:
         self.schedule = {m.m_idx:[] for m in self.m_list}
         # get jobs in system for scheduling
         self.in_system_jobs:Dict[int, Job] = self.recorder.in_system_jobs
-        # manage the log files
-        open(Path.cwd() / "log" / "gurobi.log", 'w').close()
+        # set the log path to record complex scheudling problems
         self.ext_prob_log = {}
-        self.ext_prob_log_path = Path.cwd() / "log" / "over_extended_problems.json"
+        self.ext_prob_log_path = Path(self.logger.handlers[1].baseFilename).parent / "over_extended_problems.json"
         # create the event
         self.build_schedule_event = self.env.event()
-        # create an optimizer object
-        if self.sqc_rule == SQC_rule.GurobiOptimizer:
+        # create the optimizer object
+        if self.sqc_method == SequencingMethod.GurobiOptimizer:
             self.scheduler = GurobiOptimizer
-        elif self.sqc_rule == SQC_rule.ORTools:
+        elif self.sqc_method == SequencingMethod.ORTools:
             self.scheduler = ORTools
         # process the build schedule process
         self.env.process(self.solve_problem_process())
@@ -295,7 +294,7 @@ class GurobiOptimizer:
         # build the optimization model
         with gp.Env(empty=True) as grb_env:
             grb_env.setParam('LogToConsole', 0)
-            grb_env.setParam('LogFile', str(Path.cwd() / "log" / "gurobi.log"))
+            grb_env.setParam('LogFile', str(Path(logger.handlers[1].baseFilename).parent / "gurobi.log"))
             grb_env.start()
             with gp.Model(name="opt_scheduler", env=grb_env) as model:
                 ''' 
@@ -337,7 +336,7 @@ class GurobiOptimizer:
                 logger.debug('Job in system: {}, Operation begin time pairs: {}, Job operations sequence pairs: {}, Job precedence pairs: {}'.format(
                     len(in_system_jobs), len(pairOpBeginT), len(pairOpSqc), len(pairJobPrec)))
                 ''' 
-                PART II: specify the constraints
+                PART II: create the constraints
                 '''
                 # 1. a job's operations must be processed following job's trajectory
                 constrOpSqc = model.addConstrs(
@@ -377,19 +376,23 @@ class GurobiOptimizer:
                 # 4.4 the makespan of the schedule in this cycle
                 constrMakespan = model.addConstr(varMakespan == gp.max_([varJobCompT[j] for j, m in pairJobLastOp]),name = 'constrMakespan')
                 ''' 
-                PART III: specify the objective of optimization, and run the optimization
+                PART III: create the objective(s), and run the optimization
                 '''
                 model.update()
                 model.setParam('time_limit', 10)
-                # the primary objective of optimization, however, Gurobi can be "lazy"
+                # the primary (tier 1) objective of optimization, however, Gurobi can be "lazy"
                 # optimization process terminates as soon as Gurobi finds no improvements can be obtained
                 model.setObjective(varJobTardiness.sum(), GRB.MINIMIZE)
                 # therefore we use the secondary objective in hierachical optimization
                 # it can only be optimized without compromising the primary objective
+                # tier 2 objective, minimize the makespan of entire produiction schedule
                 model.setObjectiveN(expr = varMakespan, index = 1, priority = -1)
-                # and an extra push
+                # tier 3 objective, let each operation start as early as possible
+                model.setObjectiveN(expr = varOpBeginT.sum(), index = 2, priority = -2)
+                '''
                 for j, m in pairJobLastOp:
                     model.setObjectiveN(expr = varJobCompT[j], index = j+2, priority = -2)
+                '''
                 # adding this constraint would produce perfect match schedule at the cost fo computation time
                 #model.setObjectiveN(expr = varOpBeginT.sum(), index = 1e5, priority = -3)
                 # run the optimization
