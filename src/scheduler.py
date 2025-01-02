@@ -27,7 +27,7 @@ class CentralScheduler:
         self.in_system_jobs:Dict[int, Job] = self.recorder.in_system_jobs
         # set the log path to record complex scheudling problems
         self.ext_prob_log = {}
-        self.ext_prob_log_path = Path(self.logger.handlers[1].baseFilename).parent / "over_extended_problems.json"
+        self.ext_prob_log_path = Path(self.logger.handlers[0].baseFilename).parent / "over_extended_problems.json"
         # create the event
         self.build_schedule_event = self.env.event()
         # create the optimizer object
@@ -155,7 +155,8 @@ class CentralScheduler:
     
 
     def post_simulation(self):
-        print(self.ext_prob_log)
+        if self.ext_prob_log:
+            print("{} over-extended scheduling problem is recorded, saved to {}".format(len(self.ext_prob_log), self.ext_prob_log_path))
         # after the process, write the over-extended problem instances
         with open(self.ext_prob_log_path, "w") as f:
             json.dump(self.ext_prob_log, f)
@@ -294,7 +295,7 @@ class GurobiOptimizer:
         # build the optimization model
         with gp.Env(empty=True) as grb_env:
             grb_env.setParam('LogToConsole', 0)
-            grb_env.setParam('LogFile', str(Path(logger.handlers[1].baseFilename).parent / "gurobi.log"))
+            grb_env.setParam('LogFile', str(Path(logger.handlers[0].baseFilename).parent / "gurobi.log"))
             grb_env.start()
             with gp.Model(name="opt_scheduler", env=grb_env) as model:
                 ''' 

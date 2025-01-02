@@ -26,7 +26,7 @@
     "loggers": {
       "sim_logger": {
         "level": "DEBUG",
-        "handlers": ["console", "root_file"]
+        "handlers": ["root_file", "console"]
       }
     }
 }

@@ -12,7 +12,7 @@ parser = argparse.ArgumentParser(description='demonstration')
 # system specification
 parser.add_argument('-m_no', default=5, action='store', type=int, help='Number of Machines in system')
 parser.add_argument('-span', default=100, action='store', type=int, help='Length of simulation')
-parser.add_argument('-utl', '--E_utliz', default=0.75, action='store', type=float, help='Expected system utilization rate')
+parser.add_argument('-utl', '--E_utliz', default=0.6, action='store', type=float, help='Expected system utilization rate')
 parser.add_argument('-seed', default=0, action='store', type=int, help='Random seed')
 
 # job and processing time settings
@@ -31,7 +31,7 @@ parser.add_argument('-rnd_mttr', '--random_MTTR', default=False, action='store_t
 # logging and plotting settings
 parser.add_argument('-draw', '--draw_gantt', default=5, action='store', type=int, help='Any value greater than 0 would plot the gantt chart, always no-show when simulation span is longer than 200')
 parser.add_argument('-save_gantt', default=True, action='store_false', help='Save the gantt chart figure to log?')
-parser.add_argument('-v', '--verbose', default='Debug', action='store', type=str, choices=['Debug','Info','Warning','Error'], help='Log level to show in console')
+parser.add_argument('-ns', '--no_stream', default=False, action='store_false', help='Flag to disable stream logger (print to console)')
 
 # select a scheudling rule or centralized scheduler
 methods = dict(inspect.getmembers(SequencingMethod, predicate=inspect.ismethod))
@@ -52,6 +52,6 @@ if __name__ == '__main__':
         processing_time_variability = args.processing_time_variability, pt_cv = args.pt_cv,
         machine_breakdown = args.machine_breakdown, MTBF = args.MTBF, MTTR = args.MTTR, 
         random_MTBF = args.random_MTBF, random_MTTR = args.random_MTTR,
-        draw_gantt = args.draw_gantt, save_gantt = args.save_gantt,
+        stream = not args.no_stream, draw_gantt = args.draw_gantt, save_gantt = args.save_gantt,
         sqc_method = methods[args.sqc_method]
         )

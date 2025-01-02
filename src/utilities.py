@@ -38,7 +38,7 @@ def create_logger(log_dir = Path('./log'), stream=True, keep=10):
         log_config['handlers']['root_file']['filename'] = log_path/'simulation.log'
         # remove the stream logger if not specified
         if not stream:
-            log_config['loggers']['sim_logger']['handlers'].pop()
+            log_config['loggers']['sim_logger']['handlers'].pop(1)
         # set the config and create logger
         logging.config.dictConfig(log_config)
         logger = logging.getLogger("sim_logger")
@@ -122,4 +122,4 @@ def draw_gantt_chart(logger, recorder, **kwargs):
         plt.pause(kwargs['draw_gantt'])
         plt.close(fig)
     if 'save_gantt' in kwargs and kwargs['save_gantt']:
-        fig.savefig((Path(logger.handlers[1].baseFilename)).parent / 'gantt_chart.png', dpi=600, bbox_inches='tight')
+        fig.savefig((Path(logger.handlers[0].baseFilename)).parent / 'gantt_chart.png', dpi=600, bbox_inches='tight')

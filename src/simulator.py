@@ -46,14 +46,13 @@ class SimulatorMultiThread:
                 sim_thread_dict[idx].start()
 
 
-
 class Shopfloor:
     def __init__(self, **kwargs):
         # STEP 1. important features shared by all machine and job instances
         self.env = simpy.Environment()
         self.kwargs = kwargs
         # initialize the logger
-        self.logger = create_logger()
+        self.logger = create_logger(stream=kwargs['stream'])
         # create the recorder object that shared by all other objects
         self.recorder = Recorder(**kwargs) 
         # STEP 2. create machines
@@ -72,12 +71,8 @@ class Shopfloor:
             _start_T = time.time()
             self.logger.info("Simulation starts at: {}".format(time.strftime("%Y-%m-%d, %H:%M:%S")))
             self.env.run(until=self.kwargs['span']+1000)
-            self.logger.info("Program elapsed after {}s".format(round(time.time()-_start_T,5)))
+            self.logger.info("Simulation elapsed after {}s".format(round(time.time()-_start_T,5)))
             self.narrator.post_simulation()
-            # if the simulation completed without error and "keep" mode is activated, copy the log file to storage
-            if "keep" in self.kwargs and self.kwargs['keep']:
-                ct = ''.join([str(x) for x in time.strftime("%Y,%m,%d,%H,%M,%S").split(',')])
-                shutil.copy(Path.cwd() / "log" / "sim.log", Path.cwd() / "log" / "past" / "{}_sim.log".format(ct))
             # whether to plot the gantt chart
             if "draw_gantt" in self.kwargs and self.kwargs['draw_gantt'] > 0:
                 draw_gantt_chart(self.logger, self.recorder, **self.kwargs)

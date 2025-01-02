@@ -223,7 +223,7 @@ class Narrator:
         else:
             sim_config[-1]+= "\nWall Time: {}s".format(round(time.time()-self.program_start_T,2))
         # print to console
-        self.logger.info('Simulation Configurations:\n{}\n'.format(
+        self.logger.info('Problem/Simulation Configurations:\n{}\n'.format(
             tabulate([header, m_config, j_config, sqc_config, sim_config],
                     headers="firstrow", tablefmt="grid")))
         # performance metrics
