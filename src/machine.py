@@ -5,7 +5,7 @@ The machine/sequencing agent would pick one job from its queue for the next oper
 Either by a sequencing rule or a set of trained parameters
 '''
 
-from typing import Optional, Union, Literal, Any
+from typing import Optional, List, Union, Literal, Any
 import simpy
 import numpy as np
 from .sequencing_rule import *
@@ -18,8 +18,7 @@ class Machine:
         for k, v in kwargs.items():
             setattr(self, k, v)
         # the time that agent make current and next decision
-        self.decision_T = 0
-        self.release_T = self.hidden_release_T = 0
+        self.decision_T, self.release_T, self.hidden_release_T = 0, 0, 0
         self.current_job = None
         self.status: Literal["idle", "processing", "strategic_idle", "down"] = "idle"
         self.next_job_in_schedule = -1
@@ -35,6 +34,7 @@ class Machine:
         # initialize the data for learning and recordiing
         self.breakdown_record = []
         # events
+        self.env: simpy.Environment
         self.sequencing_learning_event = self.env.event()
         self.routing_learning_event = self.env.event()
         self.required_job_in_queue_event = self.env.event()
@@ -62,6 +62,9 @@ class Machine:
             yield self.env.process(self.process_idle())
         # the loop that will run till the end of simulation
         while True:
+            # check if machine is shut down/broken
+            if not self.working_event.triggered:
+                yield self.env.process(self.process_breakdown())
             """
             PART I: when sequencing decision is needed, draw a job by specified rule/schedule
             """
@@ -77,6 +80,7 @@ class Machine:
                 # if the next job in schedule is NOT in queue, activate the strategic idleness process
                 self.check_strategic_idleness()
                 yield self.required_job_in_queue_event
+
                 try:
                     # when job required is in queue (with ot without strategic idleness)
                     self.sqc_decision_pos = [j.j_idx for j in self.queue].index(self.next_job_in_schedule)
@@ -124,7 +128,7 @@ class Machine:
             if len(self.queue) == 0:
                 self.status = "idle"
                 yield self.env.process(self.process_idle())
-            #yield self.env.timeout(0)
+            yield self.env.timeout(0)
     
 
     # when there's no job queueing, machine becomes idle
@@ -214,9 +218,9 @@ class Machine:
         # reset the decision
         self.sqc_decision_pos = None
         self.current_job = None
-        next = leaving_job.after_operation()
-        if next > -1: # if returned index is valid
-            self.m_list[next].job_arrival(leaving_job)
+        next_machine = leaving_job.after_operation()
+        if next_machine > -1: # if returned index is valid
+            self.m_list[next_machine].job_arrival(leaving_job)
 
 
     def __del__(self):

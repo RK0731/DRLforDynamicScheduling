@@ -45,7 +45,7 @@ class Job:
         self.due = np.round(self.pt_by_m_idx.sum() * self.rng.uniform(1.2, self.due_tightness) + self.env.now)
         # data recording
         self.operation_record = []
-        self.logger.info("{} > JOB {} created, trajectory: {}, exp.pt: {}, actual pt: {}, due: {}".format(
+        self.logger.info("{} > Job {} created, trajectory: {}, exp.pt: {}, actual pt: {}, due: {}".format(
             self.env.now, self.j_idx, self.trajectory, self.remaining_pt, self.actual_remaining_pt, self.due))
 
 
@@ -95,7 +95,7 @@ class Job:
         self.recorder.j_flowtime_dict[self.j_idx] = self.env.now - self.creation_T
         self.recorder.last_job_comp_T = self.env.now
         self.recorder.in_system_jobs.pop(self.j_idx)
-        self.logger.info("{} > JOB {} completed".format(self.env.now, self.j_idx))
+        self.logger.info("{} > Job {} completed".format(self.env.now, self.j_idx))
         self.tardiness = self.env.now - self.due
 
     
@@ -105,5 +105,5 @@ class Job:
         self.recorder.j_flowtime_dict[self.j_idx] = self.env.now - self.creation_T
         self.recorder.last_job_comp_T = self.env.now
         self.recorder.in_system_jobs.pop(self.j_idx)
-        self.logger.warning("{} > JOB {} exited before completion".format(self.env.now, self.j_idx))
+        self.logger.warning("{} > Job {} exited before completion".format(self.env.now, self.j_idx))
         self.tardiness = self.env.now - self.due

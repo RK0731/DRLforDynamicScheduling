@@ -10,7 +10,7 @@ parser = argparse.ArgumentParser(description='demonstration')
 
 # system specification
 parser.add_argument('-m_no', default=5, action='store', type=int, help='Number of Machines in system')
-parser.add_argument('-span', default=200, action='store', type=int, help='Length of simulation')
+parser.add_argument('-span', default=100, action='store', type=int, help='Length of simulation')
 parser.add_argument('-utl', '--E_utliz', default=0.75, action='store', type=float, help='Expected system utilization rate')
 parser.add_argument('-seed', default=0, action='store', type=int, help='Random seed')
 

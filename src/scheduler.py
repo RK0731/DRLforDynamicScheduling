@@ -3,6 +3,7 @@ import time
 from tabulate import tabulate
 import pandas as pd
 import numpy as np
+import json
 from pathlib import Path
 from typing import Dict, List, Tuple, Union, Literal
 import collections
@@ -24,8 +25,10 @@ class CentralScheduler:
         self.schedule = {m.m_idx:[] for m in self.m_list}
         # get jobs in system for scheduling
         self.in_system_jobs:Dict[int, Job] = self.recorder.in_system_jobs
-        # overwrite the gurobi log file
+        # manage the log files
         open(Path.cwd() / "log" / "gurobi.log", 'w').close()
+        self.ext_prob_log = {}
+        self.ext_prob_log_path = Path.cwd() / "log" / "over_extended_problems.json"
         # create the event
         self.build_schedule_event = self.env.event()
         # create an optimizer object
@@ -70,14 +73,16 @@ class CentralScheduler:
                     self.solve_without_optimization()
                 # otherwise call the optimizer to solve the problem
                 else:
-                    _varOpBeginT = self.scheduler.solve_scheduling_problem(
+                    _varOpBeginT, over_extended_problem = self.scheduler.solve_scheduling_problem(
                         self.logger, self.env, self.m_list,
                         self.job_intersections, self.remaining_trajectories, self.in_system_jobs)
                     self.convert_to_schedule(_varOpBeginT)
+                    # record the over-extended problem instance
+                    if not (over_extended_problem is None):
+                        self.ext_prob_log[int(self.env.now)] = over_extended_problem 
                 self.recorder.opt_time_expense += (time.time() - _begin_T)
             # de-activate the build schedule event
             self.build_schedule_event = self.env.event()
-            
 
 
     # no intersection between jobs, no optimization 
@@ -112,12 +117,12 @@ class CentralScheduler:
             self.j_op_by_schedule[_j_idx].append((_m_idx, round(T, 1)))
         # log the machines' sequence
         self.logger.debug("Machines' sequence in new schedule: \n{}".format(tabulate(
-            [["M.idx", "Job sequence"], 
+            [["M.idx", "Job sequence [j_idx]"], 
              *self.schedule.items()], 
              headers="firstrow", tablefmt="psql")))
         # log jobs' operations
         self.logger.debug("Jobs' operations in new schedule: \n{}".format(tabulate(
-            [["Job", "Operations (m_idx, opBeginT)"], 
+            [["J.idx", "Remaining Operations (m_idx, opBeginT)"], 
              *[[_j_idx, op] for _j_idx, op in self.j_op_by_schedule.items()]], 
              headers="firstrow", tablefmt="psql")))
         self.update_machine_after_optimization()
@@ -150,6 +155,14 @@ class CentralScheduler:
         return next_job_in_schedule
     
 
+    def post_simulation(self):
+        print(self.ext_prob_log)
+        # after the process, write the over-extended problem instances
+        with open(self.ext_prob_log_path, "w") as f:
+            json.dump(self.ext_prob_log, f)
+        return
+
+
 
 
 class ORTools:
@@ -171,8 +184,7 @@ class ORTools:
         NOW = int(env.now)
         UL = NOW + int(sum([sum(J.remaining_pt) for J in in_system_jobs.values()]))
         # variable storage
-        all_jobs = {}
-        all_ops = {}
+        all_jobs, all_ops = {}, {}
         m_to_ops = {m.m_idx: [] for m in m_list}
         job_tuple = collections.namedtuple("job", ['completion', 'discrepency', 'tardiness'])
         op_tuple = collections.namedtuple("operation", ['begin', 'end', 'interval'])
@@ -203,20 +215,24 @@ class ORTools:
         # 3. schedule makespan, not adjusted by the starting time of a cycle
         varMakespan = model.NewIntVar(NOW, UL, "varMakespan")
         varCumTardiness = cp_model.LinearExpr.Sum([J.tardiness for J in all_jobs.values()])
-        logger.debug('Job in system: {}'.format(len(in_system_jobs)))
         ''' 
         PART II: specify the constraints
         '''
+        # math programming model specs
+        model_spec = {'op_sqc':0, 'op_overlap':0, 'J_release':0, 'M_release':0, 'J_discrepency':0, 'J_tardiness':0}
         for j_idx, traj in remaining_trajectories.items():
             # 1. a job's operations must be processed following job's trajectory
             for op_sqc in range(len(traj) -1):
                 model.Add(all_ops[j_idx, traj[op_sqc + 1]].begin >= all_ops[j_idx, traj[op_sqc]].end)
+                model_spec['op_sqc'] += 1
             # 2. job cannot be processed bafore required machine is released or itself became available
             # 2.1 job's all operations can be processed only after machine release
             for m_idx in traj:
                 model.Add(all_ops[j_idx, m_idx].begin >= machine_release_T[m_idx])
+                model_spec['M_release'] += 1
             # 2.2 job's first operation can be processed only when it becomes available
             model.Add(all_ops[j_idx, traj[0]].begin >= job_available_T[j_idx])
+            model_spec['J_release'] += 1
             # 2.3 calculate the completion time discrepency from job completion time
             model.Add(all_jobs[j_idx].discrepency == all_jobs[j_idx].completion - int(in_system_jobs[j_idx].due))
             # 2.4 calculate the tardiness from discrepency
@@ -224,6 +240,7 @@ class ORTools:
         # 3. no overlaps amongst all operations for a machine
         for machine in m_to_ops:
             model.AddNoOverlap(m_to_ops[machine])
+            model_spec['op_overlap'] += len(m_to_ops[machine])
         # 4. system-level performance variables 
         # 4.1 cumulative tardiness
         # 4.2 the makespan of the schedule in this cycle
@@ -231,18 +248,34 @@ class ORTools:
         ''' 
         PART III: specify the objective of optimization, and run the optimization
         '''
+        logger.debug('Problem spec.: [{} Jobs], [{} Ops]. Constraints: [{} op_sqc]; [{} op_overlap]; [{} M_release]; [{} J_release/discrepency/tardiness]'.format(
+            len(in_system_jobs), sum(len(x) for x in remaining_trajectories.values()), model_spec['op_sqc'], model_spec['op_overlap'], model_spec['M_release'], model_spec['J_release']))
         model.Minimize(varCumTardiness)
         solver = cp_model.CpSolver()
         status = solver.Solve(model)
         '''
         PART IV: convert the gurobi tupledict to normal Python dict
         '''
+        time_expense = round(time.time() - START_T, 3)
         logger.debug("OR_Tools CP Model solving process elapsed, model status: {}, time expense: {}s".format(
-            solver.StatusName(status), round(time.time() - START_T, 3)))
+            solver.StatusName(status), time_expense))
+        # record the overextended problem instance
+        if time_expense > 1:
+            over_extended_problem = {
+                'Jobs': {j_idx: {
+                    "ops": [(float(m_idx), float(in_system_jobs[j_idx].pt_by_m_idx[m_idx])) for m_idx in traj],
+                    "avail": job_available_T[j_idx]
+                    } for j_idx, traj in remaining_trajectories.items()
+                },
+                'Machines': {m_idx: release_T for m_idx, release_T in machine_release_T.items()},
+                'Expense': time_expense
+            }
+        else:
+            over_extended_problem = None
         # extract the value of varOpBeginT variables
         converted_varOpBeginT = {key: solver.Value(op.begin) for key, op in all_ops.items()}
         # return only the operation begin time to build the schedule
-        return converted_varOpBeginT
+        return converted_varOpBeginT, over_extended_problem
 
 
 
@@ -364,9 +397,16 @@ class GurobiOptimizer:
                 '''
                 PART IV: convert the gurobi tupledict to normal Python dict
                 '''
+                time_expense = round(time.time() - START_T, 3)
                 logger.debug("Optimization elapsed, model status: {}, time expense: {}s".format(
-                    grb_msg[model.status], round(time.time() - START_T, 3)))
+                    grb_msg[model.status], time_expense))
                 # extract the value of varOpBeginT variables
                 converted_varOpBeginT = {key: var.X for key, var in varOpBeginT.items()}
+        # record the extended problem instance
+        if time_expense > 1:
+            over_extended_problem = [[(float(m_idx), float(in_system_jobs[j_idx].pt_by_m_idx[m_idx])) 
+                  for m_idx in traj] for j_idx, traj in remaining_trajectories.items()]
+        else:
+            over_extended_problem = None
         # return only the operation begin time to build the schedule
-        return converted_varOpBeginT
+        return converted_varOpBeginT, over_extended_problem

@@ -4,6 +4,7 @@ import time
 from typing import Dict, List, Tuple, Union, Literal
 
 from .job import Job
+from .machine import Machine
 from .sequencing_rule import *
 from .scheduler import CentralScheduler
 from .exc import *
@@ -69,9 +70,7 @@ class Narrator:
             # if no argument is given, default sequencing rule is FIFO
             self.logger.info("* Machine {} uses default FIFO rule".format(self.m_idx))
             job_sequencing_func = SQC_rule.FIFO
-        # initialization, let all machines know each other and pass the sqc rule to them
-        for m in self.m_list:
-            m.initialization(machine_list = self.m_list, sqc_rule = job_sequencing_func)
+
         '''
         2. Optional part I: machine breakdown
         '''
@@ -79,6 +78,10 @@ class Narrator:
             for m_idx, m in enumerate(self.m_list):
                 self.env.process(self.process_machine_breakdown(m_idx, self.random_MTBF, self.random_MTTR))
             self.logger.debug("Machine breakdown mode is ON, MTBF: [{}], MTTR: [{}]".format(self.MTBF, self.MTTR))
+        # initialization, let all machines know each other and pass the sqc rule to them
+        for m in self.m_list:
+            m.initialization(machine_list = self.m_list, sqc_rule = job_sequencing_func)
+
         '''
         3. Optional part II: processing time variablity
         '''
@@ -141,7 +144,7 @@ class Narrator:
             actual_end = actual_begin + bkd_t
             # wait till actual breakdown time
             yield self.env.timeout(actual_begin - self.env.now)
-            # when we reach the actual breakdown time
+            # when we reach the actual breakdown time, switch off machine
             self.m_list[m_idx].working_event = self.env.event()
             # restoration time is the sum of actual begin time and expected down time (MTTR)
             self.m_list[m_idx].release_T = actual_begin + self.MTTR
@@ -164,6 +167,9 @@ class Narrator:
         if len(self.recorder.j_operation_dict) != self.j_idx:
             msg = "Simulation FAILED, not all jobs have successfully complete their operations"
             self.logger.error(msg)
+        # write the over-extended problem instances
+        if self.opt_mode and self.central_scheduler.ext_prob_log:
+            self.central_scheduler.post_simulation()
         # compare each operation in schedule and execution
         # mismatch doesn't mean simulation failed, but indicate likely "under-optimization"
         # only meaningful when processing variablity and breakdown time (if any) variablity are 0
@@ -179,7 +185,7 @@ class Narrator:
                             _mismatch[_j_idx] = ["M{}, ET:{}, AT:{}".format(E[0], E[1], A[1])]
             if len(_mismatch): 
                 self.logger.warning("Schedule and execution MISMATCH:\n{}\n".format(
-                    tabulate([["Job", "Mismatch"],
+                    tabulate([["J.idx", "Mismatch"],
                             *[[_j_idx, description] for _j_idx, description in _mismatch.items()]],
                             headers="firstrow", tablefmt="psql")))
         # simulation configurations to be printed in console
