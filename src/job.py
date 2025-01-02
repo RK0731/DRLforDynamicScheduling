@@ -105,5 +105,5 @@ class Job:
         self.recorder.j_flowtime_dict[self.j_idx] = self.env.now - self.creation_T
         self.recorder.last_job_comp_T = self.env.now
         self.recorder.in_system_jobs.pop(self.j_idx)
-        self.logger.warning("{} > Job {} exited before completion".format(self.env.now, self.j_idx))
+        self.logger.warning("{} > Job {} is removed due to over-stay!".format(self.env.now, self.j_idx))
         self.tardiness = self.env.now - self.due

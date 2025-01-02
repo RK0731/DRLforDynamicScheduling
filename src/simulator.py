@@ -13,13 +13,13 @@ import traceback
 
 from .job import *
 from .machine import *
-from .sequencing_rule import *
+from .sequencing_rule import SequencingMethod
 from .event import *
-from .painter import *
 from .exc import *
+from .utilities import create_logger, draw_gantt_chart
 
 
-class MainSimulator:
+class Simulator:
     @classmethod
     def run(cls, **kwargs) -> None:
         # create the shopfloor instance
@@ -28,7 +28,7 @@ class MainSimulator:
         spf.run_simulation()
 
 
-class MainSimulatorProcessing:
+class SimulatorMultiThread:
     def __init__(self, **kwargs) -> None:
         if kwargs['multi_thread'] == False:
             spf = Shopfloor(**kwargs)
@@ -53,11 +53,9 @@ class Shopfloor:
         self.env = simpy.Environment()
         self.kwargs = kwargs
         # initialize the logger
-        with open(Path.cwd() / "config" / "logger_config.json") as f:
-            log_config = json.load(f)
-            logging.config.dictConfig(log_config)
-            self.logger = logging.getLogger("sim_logger")
-        self.recorder = Recorder(**kwargs) # recorder object shared by all other objects
+        self.logger = create_logger()
+        # create the recorder object that shared by all other objects
+        self.recorder = Recorder(**kwargs) 
         # STEP 2. create machines
         self.m_list = []
         self.logger.debug("Creating {} machines on shopfloor ".format(kwargs['m_no']))
@@ -70,7 +68,7 @@ class Shopfloor:
     
     def run_simulation(self):
         try:
-            self.check_settings()
+            self.verify_simulation_setting()
             _start_T = time.time()
             self.logger.info("Simulation starts at: {}".format(time.strftime("%Y-%m-%d, %H:%M:%S")))
             self.env.run(until=self.kwargs['span']+1000)
@@ -82,15 +80,15 @@ class Shopfloor:
                 shutil.copy(Path.cwd() / "log" / "sim.log", Path.cwd() / "log" / "past" / "{}_sim.log".format(ct))
             # whether to plot the gantt chart
             if "draw_gantt" in self.kwargs and self.kwargs['draw_gantt'] > 0:
-                draw_gantt_chart(self.recorder, **self.kwargs)
+                draw_gantt_chart(self.logger, self.recorder, **self.kwargs)
         except Exception as e:
             self.logger.error(f"Simulation failed due to following exception:\n{str(traceback.format_exc())}")
 
     
-    def check_settings(self):
-        # check for clash betwwen randomness and use of optimization
+    def verify_simulation_setting(self):
+        # check for clash between randomness and use of optimization
         occ_variability = self.kwargs['random_MTTR'] or self.kwargs['processing_time_variability']
-        if occ_variability and self.kwargs['sqc_rule'] == SQC_rule.opt_scheduler:
+        if occ_variability and (self.kwargs['sqc_method'] == SequencingMethod.opt_scheduler):
             Input = input("WARNING: Machine occupation time variance observed when using optimization algorithm-based scheduler! Processing time variance: {}, Random MTTR: {}.\nDo you still want to proceed? [Y/N]: ".format(
                 self.kwargs['processing_time_variability'], self.kwargs['random_MTTR']))
             if Input != "Y":

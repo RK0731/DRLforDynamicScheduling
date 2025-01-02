@@ -5,7 +5,7 @@ from typing import Dict, List, Tuple, Union, Literal
 
 from .job import Job
 from .machine import Machine
-from .sequencing_rule import *
+from .sequencing_rule import SequencingMethod
 from .scheduler import CentralScheduler
 from .exc import *
 
@@ -28,7 +28,7 @@ class Narrator:
             self.logger.debug("Random seed is specified, seed: {}".format(kwargs['seed']))
         else:
             self.seed = np.random.randint(0, 1e10)
-            self.logger.warning("Random seed is not specified, generated seed: {}, do this only for training!".format(self.seed))
+            self.logger.warning("Random seed is not specified, use seed: {}, do this only in test or training!".format(self.seed))
         self.rng = np.random.default_rng(seed = self.seed)
         # use alive bar instead of logging
         '''
@@ -54,22 +54,22 @@ class Narrator:
         1.2 Machine initialization: knowing each other and specify the sequencing rule
         '''
         self.opt_mode = False
-        if 'sqc_rule' in kwargs:
-            if kwargs['sqc_rule'] == 'complete_schedule': # follow a complete schedule
+        if 'sqc_method' in kwargs:
+            if kwargs['sqc_method'] == 'complete_schedule': # follow a complete schedule
                 pass
                 #self.job_sequencing_func = complete_schedule.who_is_next()
-            elif (kwargs['sqc_rule'] == SQC_rule.GurobiOptimizer) or (kwargs['sqc_rule'] == SQC_rule.ORTools): # or using mathematical optimization to produce dynamic schedule
+            elif (kwargs['sqc_method'] == SequencingMethod.GurobiOptimizer) or (kwargs['sqc_method'] == SequencingMethod.ORTools): # or using mathematical optimization to produce dynamic schedule
                 self.central_scheduler = CentralScheduler(**self.kwargs)
                 self.opt_mode = True
                 job_sequencing_func = self.central_scheduler.draw_from_schedule
-                self.logger.info(f"Optimization mode is ON, A [centralized {self.sqc_rule} scheduler] is created, all machines use a central schedule")
+                self.logger.info(f"Optimization mode is ON, A [centralized {self.sqc_method} scheduler] is created, all machines use a central schedule")
             else: # otherwise a valid sequencing rule must be specified
-                job_sequencing_func = kwargs['sqc_rule']
+                job_sequencing_func = kwargs['sqc_method']
                 self.logger.info("Machine use [{}] sequencing rule".format(job_sequencing_func.__name__))
         else:
             # if no argument is given, default sequencing rule is FIFO
             self.logger.info("* Machine {} uses default FIFO rule".format(self.m_idx))
-            job_sequencing_func = SQC_rule.FIFO
+            job_sequencing_func = SequencingMethod.FIFO
 
         '''
         2. Optional part I: machine breakdown
@@ -80,7 +80,7 @@ class Narrator:
             self.logger.debug("Machine breakdown mode is ON, MTBF: [{}], MTTR: [{}]".format(self.MTBF, self.MTTR))
         # initialization, let all machines know each other and pass the sqc rule to them
         for m in self.m_list:
-            m.initialization(machine_list = self.m_list, sqc_rule = job_sequencing_func)
+            m.initialization(machine_list = self.m_list, sqc_method = job_sequencing_func)
 
         '''
         3. Optional part II: processing time variablity
@@ -207,7 +207,7 @@ class Narrator:
         else:
             j_config = ["Job", self.j_idx, "pt range: {}, deterministic\ndue tightness: {}".format(self.pt_range, self.due_tightness)]            
         # sequencing decision maker
-        sqc_config = ['Sqc', "N.A.", self.sqc_rule.__name__]
+        sqc_config = ['Sqc', "N.A.", self.sqc_method.__name__]
         if self.opt_mode:
             sqc_config[-1] += "\nTotal: {}, Strategic idleness: {}".format(self.recorder.sqc_cnt_opt, self.recorder.sqc_cnt_SI)
         else:

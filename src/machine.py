@@ -44,7 +44,7 @@ class Machine:
         # let all machines know each other so they can pass the jobs around
         self.m_list = kwargs['machine_list']
         # specify the sequencing decision maker
-        self.job_sequencing = kwargs['sqc_rule']
+        self.job_sequencing = kwargs['sqc_method']
         # follow a subset of centralized production schedule which allows strategic idleness
         # or act in a reactive way that always process the queuing job as soon as possible?
         self.schedule_mode = False

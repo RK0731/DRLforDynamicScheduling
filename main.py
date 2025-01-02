@@ -2,9 +2,10 @@
 
 import argparse
 from pathlib import Path
+import inspect
 
-from src.sequencing_rule import *
-from src.simulator import *
+from src.sequencing_rule import SequencingMethod
+from src.simulator import Simulator, SimulatorMultiThread
 
 parser = argparse.ArgumentParser(description='demonstration')
 
@@ -23,17 +24,18 @@ parser.add_argument('-pt_cv', default=0.1, action='store', type=float, help='Coe
 # machine breakdown settings
 parser.add_argument('-mbkd', '--machine_breakdown', default=True, action='store_false', help='Simulate machine breakdown? (boolean)')
 parser.add_argument('-mtbf', '--MTBF', default=50, help='Mean time between failure')
-parser.add_argument('-rnd_mtbf', '--random_MTBF', default=False, action='store_true', help='Use random MTBF')
+parser.add_argument('-rnd_mtbf', '--random_MTBF', default=True, action='store_true', help='Use random MTBF')
 parser.add_argument('-mttr', '--MTTR', default=10, help='Mean time to repair')
 parser.add_argument('-rnd_mttr', '--random_MTTR', default=False, action='store_true', help='Use random MTTR')
 
 # logging and plotting settings
 parser.add_argument('-draw', '--draw_gantt', default=5, action='store', type=int, help='Any value greater than 0 would plot the gantt chart, always no-show when simulation span is longer than 200')
-parser.add_argument('-save_gantt', default=True, action='store_false', help='Save the gantt chart?')
+parser.add_argument('-save_gantt', default=True, action='store_false', help='Save the gantt chart figure to log?')
 parser.add_argument('-v', '--verbose', default='Debug', action='store', type=str, choices=['Debug','Info','Warning','Error'], help='Log level to show in console')
 
-# scheduler
-parser.add_argument('-sqc', '--sqc_rule', default= SQC_rule.ORTools, help='Sequencing rule or scheduler')
+# select a scheudling rule or centralized scheduler
+methods = dict(inspect.getmembers(SequencingMethod, predicate=inspect.ismethod))
+parser.add_argument('-sqc', '--sqc_method', default='GurobiOptimizer', help='Sequencing rule or scheduler')
 
 # threading
 parser.add_argument('-multi_thread', default=False , action='store_true', help='Use this flag to create multiple threads/environments')
@@ -44,12 +46,12 @@ args = parser.parse_args()
 
 
 if __name__ == '__main__':
-    MainSimulator.run(
+    Simulator.run(
         m_no = args.m_no, span = args.span, E_utliz = args.E_utliz, seed = args.seed, 
         pt_range = args.pt_range, due_tightness = args.due_tightness, 
         processing_time_variability = args.processing_time_variability, pt_cv = args.pt_cv,
         machine_breakdown = args.machine_breakdown, MTBF = args.MTBF, MTTR = args.MTTR, 
         random_MTBF = args.random_MTBF, random_MTTR = args.random_MTTR,
         draw_gantt = args.draw_gantt, save_gantt = args.save_gantt,
-        sqc_rule = args.sqc_rule
+        sqc_method = methods[args.sqc_method]
         )

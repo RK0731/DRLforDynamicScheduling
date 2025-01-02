@@ -1,10 +1,62 @@
 import matplotlib.pyplot as plt
+import json
+import pickle
+import re
 import numpy as np
-import sys
+import os
+import shutil
+import logging
 from pathlib import Path
+import datetime as dt
+from typing import List, Optional, Literal, Dict
 
 
-def draw_gantt_chart(recorder, **kwargs):
+def create_logger(log_dir = Path('./log'), stream=True, keep=10):
+    logger = logging.getLogger(__name__)
+    # create a new folder under "log" directory, named by current time
+    _current_T = dt.datetime.now().strftime("%Y%m%d-%H%M%S%f")
+    # then create new log directory
+    if not log_dir.exists(): 
+        log_dir.mkdir()
+    log_path = log_dir / _current_T
+    # check name of folder to avoid name clash
+    if not log_path.exists():
+        log_path.mkdir()
+    else:
+        _cnt = 1
+        while log_path.exists():
+            _cnt += 1
+            log_path =  Path('./log', _current_T + f"({_cnt})")
+        log_path.mkdir()
+    # clear old logger handlers
+    for hdlr in logger.handlers[:]:
+        logger.removeHandler(hdlr)
+        hdlr.close()
+    with open(Path.cwd() / "config" / "logger_config.json") as f:
+        # load logger cofig and point all log files to log path
+        log_config = json.load(f)
+        log_config['handlers']['root_file']['filename'] = log_path/'simulation.log'
+        # remove the stream logger if not specified
+        if not stream:
+            log_config['loggers']['sim_logger']['handlers'].pop()
+        # set the config and create logger
+        logging.config.dictConfig(log_config)
+        logger = logging.getLogger("sim_logger")
+    logger.info(f"Log path set to [{log_path}]")
+    # remove obsolete log
+    folders = [f for f in os.listdir(log_dir) if os.path.isdir(os.path.join(log_dir, f))]
+    folders.sort(key=lambda x: os.path.getmtime(os.path.join('log', x)), reverse=True)
+    # Keep only the latest N (default 20) folders
+    folders_to_keep = folders[:keep]
+    # Remove the folders that exceed the limit
+    for folder in folders:
+        if folder not in folders_to_keep:
+            folder_path = os.path.join('./log', folder)
+            shutil.rmtree(folder_path)
+    return logger
+
+
+def draw_gantt_chart(logger, recorder, **kwargs):
     if kwargs['span']>=250:
         return
     # if duration is ok, draw the figure
@@ -70,4 +122,4 @@ def draw_gantt_chart(recorder, **kwargs):
         plt.pause(kwargs['draw_gantt'])
         plt.close(fig)
     if 'save_gantt' in kwargs and kwargs['save_gantt']:
-        fig.savefig(Path.cwd() / 'log' / 'gantt_chart.png', dpi=600, bbox_inches='tight')
+        fig.savefig((Path(logger.handlers[1].baseFilename)).parent / 'gantt_chart.png', dpi=600, bbox_inches='tight')
