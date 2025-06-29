@@ -1,16 +1,18 @@
 """
-This is the job class, carries the information of trajectory, processing time, due date, etc.
+This is the job class, carries the information such as operation trajectory, processing time, due date, etc.
 """
 
 from dataclasses import dataclass
+from logging import Logger
 import numpy as np
+from simpy import Environment
 from typing import Optional, Union, Literal, Any
 
 
 @dataclass
 class Job:
-    env: Any
-    logger: Any
+    env: Environment
+    logger: Logger
     recorder: Any
     rng: np.random.default_rng
     j_idx: int
@@ -23,7 +25,7 @@ class Job:
     transfer_t: float = 0
  
 
-    # create additional features
+    # create additional attributes after initialization
     def __post_init__(self):
         # new intrinsic attributes
         self.creation_T = self.arrival_T = self.env.now
@@ -105,5 +107,5 @@ class Job:
         self.recorder.j_flowtime_dict[self.j_idx] = self.env.now - self.creation_T
         self.recorder.last_job_comp_T = self.env.now
         self.recorder.in_system_jobs.pop(self.j_idx)
-        self.logger.warning("{} > Job {} is removed due to over-stay!".format(self.env.now, self.j_idx))
+        self.logger.warning("{} > Job {} is removed from system due to over-stay!".format(self.env.now, self.j_idx))
         self.tardiness = self.env.now - self.due

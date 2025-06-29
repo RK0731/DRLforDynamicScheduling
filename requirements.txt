@@ -5,3 +5,4 @@ pandas==2.0.3
 scikit-learn==1.4.2
 simpy==4.1.1
 tabulate==0.8.9
+torch==2.5.0

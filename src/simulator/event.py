@@ -1,5 +1,7 @@
 # standard imports
+from logging import Logger
 import numpy as np
+from simpy import Environment
 from tabulate import tabulate
 import time
 from typing import Dict, List, Tuple, Union, Literal
@@ -19,11 +21,16 @@ Able to simulate job arrival/cancellation, machine breakdown, processing time va
 class Narrator:
     def __init__(self, **kwargs):
         '''
-        0. User specified attributes
+        Create a Narrtor instance to initialize entities like machines and jobs.
+        And create events like job arival and/or machine breakdown for simulation.
         '''
         for k, v in kwargs.items():
             setattr(self, k, v)
         self.kwargs = kwargs
+        # decalre necessary types
+        self.logger:Logger 
+        self.env:Environment
+        self.m_list:List[Machine]
         self.logger.debug("Event narrator created")
         # specify the random seed
         if ('seed' in kwargs) and (kwargs['seed'] != 0):
@@ -32,7 +39,6 @@ class Narrator:
             self.seed = np.random.randint(0, 1e10)
             self.logger.warning("Random seed is not specified, use seed: {}, do this only in test or training!".format(self.seed))
         self.rng = np.random.default_rng(seed = self.seed)
-        # use alive bar instead of logging
         '''
         1.1 Core components: machines and dynamic job arrivals
         '''
@@ -67,14 +73,13 @@ class Narrator:
                 self.logger.info(f"Optimization mode is ON, A [centralized {self.sqc_method} scheduler] is created, all machines use a central schedule")
             else: # otherwise a valid sequencing rule must be specified
                 job_sequencing_func = kwargs['sqc_method']
-                self.logger.info("Machine use [{}] sequencing rule".format(job_sequencing_func.__name__))
+                self.logger.info(f"Machine use [{job_sequencing_func.__name__}] sequencing rule")
         else:
             # if no argument is given, default sequencing rule is FIFO
-            self.logger.info("* Machine {} uses default FIFO rule".format(self.m_idx))
+            self.logger.info(f"* Machine {self.m_idx} uses default FIFO rule")
             job_sequencing_func = SequencingMethod.FIFO
-
         '''
-        2. Optional part I: machine breakdown
+        2. Optional event I: machine breakdown
         '''
         if self.machine_breakdown == True:
             for m_idx, m in enumerate(self.m_list):
@@ -83,9 +88,8 @@ class Narrator:
         # initialization, let all machines know each other and pass the sqc rule to them
         for m in self.m_list:
             m.initialization(machine_list = self.m_list, sqc_method = job_sequencing_func)
-
         '''
-        3. Optional part II: processing time variablity
+        3. Optional event II: processing time variablity
         '''
         if kwargs['processing_time_variability'] and kwargs['pt_cv'] > 0:
             self.pt_cv = kwargs['pt_cv']
@@ -114,8 +118,9 @@ class Narrator:
                 pt_range = self.pt_range, pt_cv = self.pt_cv, due_tightness = self.due_tightness)
             # track this job
             self.recorder.in_system_jobs[self.j_idx] = job_instance
-            # build a new schedule if optimization mode is on
+            # force rendering the event
             yield self.env.timeout(0)
+            # build a new schedule if optimization mode is on
             if self.opt_mode:
                 if not self.central_scheduler.build_schedule_event.triggered:
                     self.central_scheduler.build_schedule_event.succeed()
@@ -256,14 +261,12 @@ class Narrator:
         self.reward_record[m_idx][1].append(r_t)
 
 
-
-
-# Retain all records
+# recorder class to keep all simuilation info
 class Recorder:
     def __init__(self, **kwargs):
         for k, v in kwargs.items():
             setattr(self, k, v)
-        # sim data
+        # simulation data
         self.opt_time_expense = 0
         # count occurance of sequencing decisions
         self.sqc_cnt_opt = self.sqc_cnt_SI = self.sqc_cnt_reactive = self.sqc_cnt_passive = 0

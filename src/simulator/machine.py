@@ -10,12 +10,13 @@ import simpy
 from typing import Optional, List, Union, Literal, Any
 # project modules
 from .exc import *
+from .job import Job
 from ..scheduler.sequencing_rule import *
 
 
 class Machine:
     def __init__(self, *args, **kwargs):
-        # user specified attributes
+        # user specified attributes, decalre type if necessary
         for k, v in kwargs.items():
             setattr(self, k, v)
         # the time that agent make current and next decision
@@ -24,7 +25,7 @@ class Machine:
         self.status: Literal["idle", "processing", "strategic_idle", "down"] = "idle"
         self.next_job_in_schedule = -1
         # Initialize the possible events during production
-        self.queue = []
+        self.queue:List[Job] = []
         self.sufficient_stock = self.env.event()
         # working condition in shut down or breakdown
         self.working_event = self.env.event()
@@ -67,12 +68,12 @@ class Machine:
             if not self.working_event.triggered:
                 yield self.env.process(self.process_breakdown())
             """
-            PART I: when sequencing decision is needed, draw a job by specified rule/schedule
+            PART I: when sequencing decision is needed, pick a job by specified rule/schedule
             """
             # record the time of the sequencing decision, used as the index of produciton record in job creator
             self.decision_T = self.env.now
             _decision_type = None
-            # TYPE I: if strategic idleness is allowed
+            # TYPE I: if strategic idleness is enabled
             if self.schedule_mode:
                 # the returned value is the first job's index in pre-developed schedule
                 # i.e. the next job that should be processed by this machine
@@ -83,7 +84,7 @@ class Machine:
                 yield self.required_job_in_queue_event
 
                 try:
-                    # when job required is in queue (with ot without strategic idleness)
+                    # when scheduled job is in queue (with ot without strategic idleness)
                     self.sqc_decision_pos = [j.j_idx for j in self.queue].index(self.next_job_in_schedule)
                     self.picked_j_instance = self.queue[self.sqc_decision_pos]
                 except ValueError as e:

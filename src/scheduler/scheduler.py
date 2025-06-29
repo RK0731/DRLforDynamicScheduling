@@ -49,7 +49,7 @@ class CentralScheduler:
             # if there's only one job in system
             if len(self.in_system_jobs) == 1:
                 self.solve_without_optimization()
-            # if more than one jobs in system, get remaining operations' info, and check the intersection between them
+            # if more than one jobs in system, get all jobs' remaining operation info, and check the intersection between them
             else:
                 self.remaining_trajectories = {}
                 self.remaining_pts = {}
@@ -59,12 +59,12 @@ class CentralScheduler:
                     if _job.status=='queuing':
                         self.remaining_trajectories[_j_idx] = _job.remaining_machines
                         self.remaining_pts[_j_idx] = _job.remaining_pt
-                    elif len(_job.remaining_machines) > 1: # excluding current machine if being processed
+                    elif len(_job.remaining_machines) > 1: # excluding current machine if the job is under processing
                         self.remaining_trajectories[_j_idx] = _job.remaining_machines[1:]
                         self.remaining_pts[_j_idx] = _job.remaining_pt[1:]
-                # get the potential intersection between jobs' trajectory
-                # needed to configure the precedence constraints
+                # get the potential intersection between jobs' trajectory to define the precedence constraints
                 for pair in (itertools.combinations(self.remaining_trajectories.keys(), 2)):
+                    # get trajectories of any 2 jobs to infer intersection
                     _rem_traj_1, _rem_traj_2 = self.remaining_trajectories[pair[0]], self.remaining_trajectories[pair[1]]
                     _intersec = list(set(_rem_traj_1).intersection(_rem_traj_2))
                     if len(_intersec):

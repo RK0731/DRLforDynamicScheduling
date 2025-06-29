@@ -1,23 +1,24 @@
-import random
-import numpy as np
-import sys
 import copy
+import numpy as np
 import matplotlib.pyplot as plt
+import random
+from simpy import Environment
+import sys
+from tabulate import tabulate
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 from torch.distributions import Categorical
-from tabulate import tabulate
 
-'''
-The deep MARL learning/training algorithm
-'''
 
 class Brain:
     def __init__(self, env, event_creator, machines, warm_up, span, *args, **kwargs):
+        '''
+        Deep MARL learning-based scheduler
+        '''
         # initialize the environment and the machines to be controlled
-        self.env = env
+        self.env:Environment = env
         self.event_creator = event_creator
         # training duration
         self.warm_up = warm_up
@@ -137,7 +138,6 @@ class Brain:
        including the warm-up, action functions and multiple sequencing rules
        those functions are also used by validation module
     '''
-
     def warm_up_process(self): # warm up with random exploration
         print("random exploration from time {} to time {}".format(self.env.now, self.warm_up))
         yield self.env.timeout(self.warm_up - 1)
@@ -189,8 +189,6 @@ class Brain:
     state functions under this category will be called twice in each operation
     before the execution of operation (s_t), and after (s_t+1)
     '''
-
-
     def state_direct(self, sqc_data): # presenting information of job which satisfies certain criteria
         '''STEP 1: check queuing jobs, if any, clip the sqc data'''
         # number of candidate jobs
