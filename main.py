@@ -1,28 +1,28 @@
 #!/usr/bin/env python3
 
 import argparse
-from pathlib import Path
 import inspect
+from pathlib import Path
 
-from src.sequencing_rule import SequencingMethod
-from src.simulator import Simulator, SimulatorMultiThread
+from src.scheduler.sequencing_rule import SequencingMethod
+from src.simulator.simulator import Simulator, SimulatorMultiThread
 
 parser = argparse.ArgumentParser(description='demonstration')
 
 # system specification
 parser.add_argument('-m_no', default=5, action='store', type=int, help='Number of Machines in system')
+parser.add_argument('-seed', default=0, action='store', type=int, help='Random seed')
 parser.add_argument('-span', default=100, action='store', type=int, help='Length of simulation')
 parser.add_argument('-utl', '--E_utliz', default=0.6, action='store', type=float, help='Expected system utilization rate')
-parser.add_argument('-seed', default=0, action='store', type=int, help='Random seed')
 
 # job and processing time settings
-parser.add_argument('-pt_r','--pt_range', default=[1,10], action='store', type=list, help='Range of processing time')
 parser.add_argument('-dt', '--due_tightness', default=2, action='store', type=float, help='Due time tightness')
+parser.add_argument('-pt_r','--pt_range', default=[1,10], action='store', type=list, help='Range of processing time')
 parser.add_argument('-pt_v', '--processing_time_variability', default=False, action='store_true', help='Flag to use non-deterministic processing time? (boolean)')
 parser.add_argument('-pt_cv', default=0.1, action='store', type=float, help='Coefficiency of variance of processing time')
 
 # machine breakdown settings
-parser.add_argument('-mbkd', '--machine_breakdown', default=True, action='store_false', help='Simulate machine breakdown? (boolean)')
+parser.add_argument('-mbkd', '--machine_breakdown', default=True, action='store_false', help='Simulate machine breakdown events? (boolean)')
 parser.add_argument('-mtbf', '--MTBF', default=50, help='Mean time between failure')
 parser.add_argument('-rnd_mtbf', '--random_MTBF', default=True, action='store_true', help='Use random MTBF')
 parser.add_argument('-mttr', '--MTTR', default=10, help='Mean time to repair')

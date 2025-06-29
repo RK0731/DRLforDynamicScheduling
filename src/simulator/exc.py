@@ -2,8 +2,6 @@
 Customized exception classes
 """
 
-
-
 class InvalidRequestError(Exception):
     def __init__(self, message, status_code=400):
         self.message = message

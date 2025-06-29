@@ -1,20 +1,81 @@
-import matplotlib.pyplot as plt
+#!/usr/bin/python3
+# Author: Liu Renke
+from datetime import datetime as dt
 import json
-import pickle
-import re
+import logging
+from logging.config import dictConfig
+import matplotlib.pyplot as plt
 import numpy as np
 import os
-import shutil
-import logging
 from pathlib import Path
-import datetime as dt
+import shutil
 from typing import List, Optional, Literal, Dict
+
+
+LOG_ROOT_DIR = Path.cwd()/'logs'
+LOG_DIR = LOG_ROOT_DIR/dt.now().strftime("%Y%m%d-%H%M%S%f")
+LOG_CONFIG = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "verbose": {
+            "format": '%(asctime)s [%(module)s: %(lineno)-3d] %(levelname)-5s >>> %(message)s',
+            "datefmt": "%H:%M:%S"
+        },
+        "brief": {
+            "format": '%(asctime)s %(levelname)-7s >>> %(message)s',
+            "datefmt": "%H:%M:%S"
+        },
+    },
+    "handlers": {
+        "sim_log_file": {
+            "class": "logging.FileHandler",
+            "formatter": "verbose",
+            "filename": LOG_DIR/"sim.log",
+            "mode": "a",
+        },
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "brief",
+            "level": "INFO",
+        }
+    },
+    "root": {
+        "handlers": ["sim_log_file"],
+        "level": "DEBUG",
+    },
+    "loggers": {
+        "sim_logger": {
+            "handlers": ["sim_log_file", "console"],
+            "level": "DEBUG",
+            "propagate": False
+        }
+    }
+}
+
+def setup_logger(stream:bool=True, keep:int=10):
+    # verify log directories
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    # prune obsolete log folders from root logging directory
+    folders = [f for f in os.listdir(LOG_ROOT_DIR)]
+    folders.sort(key=lambda x: os.path.getmtime(LOG_ROOT_DIR / x), reverse=True)
+    # remove obsolete log files/folders
+    folders_to_keep = folders[:keep]
+    for folder in folders:
+        if folder not in folders_to_keep:
+            folder_path = LOG_ROOT_DIR / folder
+            shutil.rmtree(folder_path)
+    # restart all loggers
+    if not stream:
+        LOG_CONFIG['loggers']['sim_logger']['handlers'].pop(1) # remove the streaming handler
+    dictConfig(LOG_CONFIG)
+    return logging.getLogger("sim_logger")
 
 
 def create_logger(log_dir = Path('./log'), stream=True, keep=10):
     logger = logging.getLogger(__name__)
     # create a new folder under "log" directory, named by current time
-    _current_T = dt.datetime.now().strftime("%Y%m%d-%H%M%S%f")
+    _current_T = dt.now().strftime("%Y%m%d-%H%M%S%f")
     # then create new log directory
     if not log_dir.exists(): 
         log_dir.mkdir()
@@ -64,7 +125,6 @@ def draw_gantt_chart(logger, recorder, **kwargs):
     col_list = ['tab:blue', 'tab:orange', 'tab:green', 'tab:red', 'tab:purple', 'tab:brown', 'tab:pink', 'tab:gray', 'tab:olive', 'tab:cyan']
     gantt_chart = fig.add_subplot(1,1,1)
     yticks_pos = np.arange(recorder.m_no) # vertical position of tick labels
-
     '''
     PART A. jobs' operation history
     '''
@@ -81,7 +141,6 @@ def draw_gantt_chart(logger, recorder, **kwargs):
                 begin, m_idx+(j_idx%3)*0.13-0.25, j_idx, fontsize=10, ha='left', va='bottom', color='k'
                 )
             last_output = begin + pt
-
     '''
     PART B. 
     '''
@@ -93,7 +152,6 @@ def draw_gantt_chart(logger, recorder, **kwargs):
             gantt_chart.broken_barh(
                 [(begin, end-begin)], (m_idx-0.25, 0.5), color='w', hatch='//', edgecolor='k'
                 )
-
     '''
     PART C. 
     '''
@@ -115,8 +173,6 @@ def draw_gantt_chart(logger, recorder, **kwargs):
     # limit
     gantt_chart.set_xlim(0, plot_range)
     #gantt_chart.set_ylim(0, recorder.m_no)
-
-
     if 'draw_gantt' in kwargs and kwargs['draw_gantt']>0:
         plt.show(block=False)
         plt.pause(kwargs['draw_gantt'])

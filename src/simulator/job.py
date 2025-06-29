@@ -2,8 +2,8 @@
 This is the job class, carries the information of trajectory, processing time, due date, etc.
 """
 
-import numpy as np
 from dataclasses import dataclass
+import numpy as np
 from typing import Optional, Union, Literal, Any
 
 

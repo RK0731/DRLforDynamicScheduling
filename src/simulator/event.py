@@ -1,13 +1,15 @@
+# standard imports
 import numpy as np
 from tabulate import tabulate
 import time
 from typing import Dict, List, Tuple, Union, Literal
-
+# project modules
+from .exc import *
 from .job import Job
 from .machine import Machine
-from .sequencing_rule import SequencingMethod
-from .scheduler import CentralScheduler
-from .exc import *
+from ..scheduler.sequencing_rule import SequencingMethod
+from ..scheduler.scheduler import CentralScheduler
+
 
 '''
 The module that creates dynamic events 
@@ -17,7 +19,7 @@ Able to simulate job arrival/cancellation, machine breakdown, processing time va
 class Narrator:
     def __init__(self, **kwargs):
         '''
-        0. Shared features
+        0. User specified attributes
         '''
         for k, v in kwargs.items():
             setattr(self, k, v)
@@ -149,8 +151,8 @@ class Narrator:
             # restoration time is the sum of actual begin time and expected down time (MTTR)
             self.m_list[m_idx].release_T = actual_begin + self.MTTR
             self.m_list[m_idx].status = "down"
-            self.logger.debug("{} > BKD on: Machine {} will be down for {}, till {}".format(self.env.now, m_idx, bkd_t, actual_begin + self.MTTR) 
-                              + ". Call central scheduler to rebuild the schedule" if self.opt_mode else "")
+            self.logger.debug(f"{self.env.now} > BKD on: Machine {m_idx} will be down for {bkd_t}, till {actual_begin + self.MTTR}"
+                              + (". Invoke central scheduler to rebuild the schedule" if self.opt_mode else ""))
             #yield self.env.timeout(0)
             # rebuild schedule if necessary
             if self.opt_mode:

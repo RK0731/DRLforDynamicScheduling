@@ -1,15 +1,16 @@
 '''
-This is the simulation model of machine
+This is the simulation model of machine (work station)
 When machine becomes idle and more than one jobs are queuing to be processed
 The machine/sequencing agent would pick one job from its queue for the next operation
-Either by a sequencing rule or a set of trained parameters
+Either by following a sequencing rule or a set of trained parameters
 '''
-
-from typing import Optional, List, Union, Literal, Any
-import simpy
+# standard imports
 import numpy as np
-from .sequencing_rule import *
+import simpy
+from typing import Optional, List, Union, Literal, Any
+# project modules
 from .exc import *
+from ..scheduler.sequencing_rule import *
 
 
 class Machine:

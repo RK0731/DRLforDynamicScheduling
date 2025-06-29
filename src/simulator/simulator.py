@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
 
-import threading
-import multiprocessing as mp
-import simpy
-import pandas as pd
+# standard imports
 import logging.config
-import time
-import json
+import multiprocessing as mp
+import pandas as pd
 from pathlib import Path
 import shutil
+import simpy
+import time
 import traceback
 
-from .job import *
-from .machine import *
-from .sequencing_rule import SequencingMethod
+# Project modules
 from .event import *
 from .exc import *
-from .utilities import create_logger, draw_gantt_chart
+from .job import *
+from .machine import *
+from ..scheduler.sequencing_rule import SequencingMethod
+from ..utilities import create_logger, setup_logger, draw_gantt_chart
 
 
 class Simulator:
@@ -52,7 +52,7 @@ class Shopfloor:
         self.env = simpy.Environment()
         self.kwargs = kwargs
         # initialize the logger
-        self.logger = create_logger(stream=kwargs['stream'])
+        self.logger = setup_logger(stream=kwargs['stream'])
         # create the recorder object that shared by all other objects
         self.recorder = Recorder(**kwargs) 
         # STEP 2. create machines

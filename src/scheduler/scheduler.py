@@ -1,20 +1,22 @@
-import itertools
-import time
-from tabulate import tabulate
-import pandas as pd
-import numpy as np
-import json
-from pathlib import Path
-from typing import Dict, List, Tuple, Union, Literal
+# standard imports
 import collections
-from ortools.sat.python import cp_model
 import gurobipy as gp
 from gurobipy import GRB
-
-from .job import Job
-from .machine import Machine
+import itertools
+import json
+import logging
+import numpy as np
+from ortools.sat.python import cp_model
+import pandas as pd
+from pathlib import Path
+import time
+from tabulate import tabulate
+from typing import Dict, List, Tuple, Union, Literal
+# project moduels
 from .sequencing_rule import SequencingMethod
-from .exc import *
+from ..simulator.exc import *
+from ..simulator.job import Job
+from ..simulator.machine import Machine
 
 
 class CentralScheduler:
@@ -23,6 +25,7 @@ class CentralScheduler:
         for k, v in kwargs.items():
             setattr(self, k, v)
         self.schedule = {m.m_idx:[] for m in self.m_list}
+        self.logger: logging.Logger
         # get jobs in system for scheduling
         self.in_system_jobs:Dict[int, Job] = self.recorder.in_system_jobs
         # set the log path to record complex scheudling problems

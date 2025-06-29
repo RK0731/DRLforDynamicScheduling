@@ -24,7 +24,6 @@ modules*
 **/log
 **/charts
 **/__pycache__
-**/qdrant_storage
 
 # Ignore any files or folders whose names contain the pattern
 *rk_*

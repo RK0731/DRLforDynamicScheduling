@@ -25,17 +25,17 @@ class SequencingMethod:
     @classmethod 
     # place holder for Gurobi optimizer, will use the draw_from_schedule function after creating a central scheduler object
     def GurobiOptimizer(cls, jobs, *args, **kwargs): 
-        pass
+        return
 
     @classmethod 
     # place holder for Google OR-Tools, will use the draw_from_schedule function after creating a central scheduler object
     def ORTools(cls, jobs, *args, **kwargs): 
-        pass
+        return
 
     @classmethod 
     # place holder, will use the function after creating a DRL scheduler
     def DRL_scheduler(cls, jobs, *args, **kwargs): 
-        pass
+        return
 
 
 if __name__ == '__main__':
