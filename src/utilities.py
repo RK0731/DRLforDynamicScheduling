@@ -19,11 +19,11 @@ LOG_CONFIG = {
     "disable_existing_loggers": False,
     "formatters": {
         "verbose": {
-            "format": '%(asctime)s [%(module)s: %(lineno)-3d] %(levelname)-5s >>> %(message)s',
+            "format": '%(asctime)s [%(module)s: %(lineno)-3d] %(levelname)-8s >>> %(message)s',
             "datefmt": "%H:%M:%S"
         },
         "brief": {
-            "format": '%(asctime)s %(levelname)-7s >>> %(message)s',
+            "format": '%(levelname)-7s >>> %(message)s',
             "datefmt": "%H:%M:%S"
         },
     },
@@ -47,7 +47,6 @@ LOG_CONFIG = {
     "loggers": {
         "sim_logger": {
             "handlers": ["sim_log_file", "console"],
-            "level": "DEBUG",
             "propagate": False
         }
     }
@@ -138,7 +137,8 @@ def draw_gantt_chart(logger, recorder, **kwargs):
                 [(begin, pt)], (m_idx-0.25, 0.5), color=col, edgecolor='k'
                 )
             gantt_chart.text(
-                begin, m_idx+(j_idx%3)*0.13-0.25, j_idx, fontsize=10, ha='left', va='bottom', color='k'
+                begin, m_idx+(j_idx%4)*0.13-0.25, j_idx, fontsize=10, ha='left', va='bottom', 
+                color='k', bbox=dict(facecolor='lightblue',alpha=0.8,pad=1)
                 )
             last_output = begin + pt
     '''

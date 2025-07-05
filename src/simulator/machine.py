@@ -22,10 +22,11 @@ class Machine:
         # the time that agent make current and next decision
         self.decision_T, self.release_T, self.hidden_release_T = 0, 0, 0
         self.current_job = None
+        self.m_idx:int
         self.status: Literal["idle", "processing", "strategic_idle", "down"] = "idle"
         self.next_job_in_schedule = -1
         # Initialize the possible events during production
-        self.queue:List[Job] = []
+        self.queue:List[Union[Job|None]] = []
         self.sufficient_stock = self.env.event()
         # working condition in shut down or breakdown
         self.working_event = self.env.event()
@@ -68,7 +69,7 @@ class Machine:
             if not self.working_event.triggered:
                 yield self.env.process(self.process_breakdown())
             """
-            PART I: when sequencing decision is needed, pick a job by specified rule/schedule
+            PART I: when sequencing decision is needed, pick a job following a rule or schedule
             """
             # record the time of the sequencing decision, used as the index of produciton record in job creator
             self.decision_T = self.env.now
@@ -79,7 +80,7 @@ class Machine:
                 # i.e. the next job that should be processed by this machine
                 # WARNING: a sequencing decision has been made, pop the first element from the schedule
                 self.next_job_in_schedule = self.job_sequencing(m_idx = self.m_idx)
-                # if the next job in schedule is NOT in queue, activate the strategic idleness process
+                # if the next scheduled job is NOT yet in queue, activate the strategic idleness process
                 self.check_strategic_idleness()
                 yield self.required_job_in_queue_event
 
@@ -87,11 +88,11 @@ class Machine:
                     # when scheduled job is in queue (with ot without strategic idleness)
                     self.sqc_decision_pos = [j.j_idx for j in self.queue].index(self.next_job_in_schedule)
                     self.picked_j_instance = self.queue[self.sqc_decision_pos]
-                except ValueError as e:
-                    raise InvalidRequestError(f"Machine {self.m_idx} trying to pick Job {self.next_job_in_schedule} that is not in queue!")
+                except ValueError as e: # terminate the simulation if simulator bug detected!
+                    raise SimulatorError(f"Machine {self.m_idx} trying to pick Job {self.next_job_in_schedule} that is not in queue!")
                 self.recorder.sqc_cnt_opt += 1
                 _decision_type = 'Scheduled'
-            # TYPE II: if sequencing is reactive
+            # TYPE II: if sequencing strategy is reactive
             # and we have more than one queuing jobs, sequencing is required
             elif len(self.queue) > 1:
                 # the returned value is picked job's position in machine's queue
@@ -106,7 +107,7 @@ class Machine:
                 self.recorder.sqc_cnt_passive += 1
                 _decision_type = 'Passive'
             """
-            PART II. after the decision, update infromation and perform the operation
+            PART II. after the decision, update information and perform the operation
             """
             # update job instance, and get the time of operation
             self.status = "processing"
@@ -116,7 +117,7 @@ class Machine:
                 self.picked_j_instance.remaining_operations[0][1], actual_pt))
             # The production process (yield the actual processing time of operation)
             yield self.env.timeout(actual_pt)
-            self.logger.info("{} > DEP: Job {} departs Machine {}".format(
+            self.logger.info("{} > OUT: Job {} left Machine {}".format(
                 self.env.now, self.picked_j_instance.j_idx, self.m_idx))
             """
             PART III: after operation, update information and check for machine breakdown and idleness
@@ -140,7 +141,7 @@ class Machine:
         self.sufficient_stock = self.env.event()
         # proceed only if the sufficient_stock event is triggered by new job arrival
         yield self.sufficient_stock
-        # examine whether the scheduled shutdown is triggered
+        # check if the scheduled shutdown is triggered
         if not self.working_event.triggered:
             yield self.env.process(self.process_breakdown())
         self.logger.info("{} > IDL off: Machine {} replenished".format(self.env.now, self.m_idx))
@@ -152,8 +153,7 @@ class Machine:
         # suspend the production here, untill the working_event is triggered
         yield self.working_event
         self.breakdown_record.append([(self.m_idx, start, self.env.now - start)])
-        self.logger.info("{} > BKD off: Machine {} repaired, delayed the production for {} units".format(
-            self.env.now, self.m_idx, self.env.now - start))
+        self.logger.info(f"{self.env.now} > BKD end: Machine {self.m_idx} repaired, delayed the production for {self.env.now - start} units")
 
 
     # a new job (instance) arrives
@@ -164,9 +164,9 @@ class Machine:
         # change the stocking status if machine is currently idle (empty stock or strategic)
         if not self.sufficient_stock.triggered:
             self.sufficient_stock.succeed()
-        common_msg = "{} > ARV: Job {} arrived at Machine {}, current status {}, queue: {}".format(
+        common_msg = "{} > IN: Job {} arrived at Machine {}, current status {}, queue: {}".format(
             self.env.now, arriving_job.j_idx, self.m_idx, self.status, [j.j_idx for j in self.queue])
-        extra_msg = ", next job in schedule: {}".format(self.next_job_in_schedule)
+        extra_msg = ", scheduled next op/job: {}".format(self.next_job_in_schedule if self.next_job_in_schedule>0 else 'None')
         self.logger.info(common_msg + extra_msg if self.schedule_mode else common_msg)
         # if schedule mode is ON, need to check if arrived job match the required job
         if self.schedule_mode:
@@ -180,7 +180,7 @@ class Machine:
 
     # suspend the machine if strategic idleness is needed
     def check_strategic_idleness(self):
-        # if the next job in schedule is now queuing
+        # if the next scheduled job is queuing now
         if self.next_job_in_schedule in [j.j_idx for j in self.queue]:
             if not self.required_job_in_queue_event.triggered:
                 self.required_job_in_queue_event.succeed() 

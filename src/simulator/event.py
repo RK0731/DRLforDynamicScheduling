@@ -14,15 +14,15 @@ from ..scheduler.scheduler import CentralScheduler
 
 
 '''
-The module that creates dynamic events 
-Able to simulate job arrival/cancellation, machine breakdown, processing time variability, etc.
+This module contains classes for creating/initializing simulation entities and dynamic events 
+Following events are enabled: job arrival/cancellation, machine breakdown, processing time variability, etc.
 '''
 
 class Narrator:
     def __init__(self, **kwargs):
         '''
         Create a Narrtor instance to initialize entities like machines and jobs.
-        And create events like job arival and/or machine breakdown for simulation.
+        And create dynamic/random events like job arival and/or machine breakdown for simulation.
         '''
         for k, v in kwargs.items():
             setattr(self, k, v)
@@ -31,6 +31,7 @@ class Narrator:
         self.logger:Logger 
         self.env:Environment
         self.m_list:List[Machine]
+        self.recorder:Recorder
         self.logger.debug("Event narrator created")
         # specify the random seed
         if ('seed' in kwargs) and (kwargs['seed'] != 0):
@@ -66,7 +67,8 @@ class Narrator:
             if kwargs['sqc_method'] == 'complete_schedule': # follow a complete schedule
                 pass
                 #self.job_sequencing_func = complete_schedule.who_is_next()
-            elif (kwargs['sqc_method'] == SequencingMethod.GurobiOptimizer) or (kwargs['sqc_method'] == SequencingMethod.ORTools): # or using mathematical optimization to produce dynamic schedule
+            # or using mathematical optimization to produce dynamic schedule
+            elif (kwargs['sqc_method'] == SequencingMethod.GurobiOptimizer) or (kwargs['sqc_method'] == SequencingMethod.ORTools): 
                 self.central_scheduler = CentralScheduler(**self.kwargs)
                 self.opt_mode = True
                 job_sequencing_func = self.central_scheduler.draw_from_schedule
@@ -76,16 +78,18 @@ class Narrator:
                 self.logger.info(f"Machine use [{job_sequencing_func.__name__}] sequencing rule")
         else:
             # if no argument is given, default sequencing rule is FIFO
-            self.logger.info(f"* Machine {self.m_idx} uses default FIFO rule")
+            self.logger.info(f"* Machine {self.m_idx} uses default FIFO rule for job sequencing")
             job_sequencing_func = SequencingMethod.FIFO
         '''
         2. Optional event I: machine breakdown
         '''
         if self.machine_breakdown == True:
             for m_idx, m in enumerate(self.m_list):
-                self.env.process(self.process_machine_breakdown(m_idx, self.random_MTBF, self.random_MTTR))
-            self.logger.debug("Machine breakdown mode is ON, MTBF: [{}], MTTR: [{}]".format(self.MTBF, self.MTTR))
-        # initialization, let all machines know each other and pass the sqc rule to them
+                self.env.process(self.process_machine_breakdown(m, self.random_MTBF, self.random_MTTR))
+            self.logger.info("Machine breakdown mode is ON, MTBF: [{}], MTTR: [{}]".format(self.MTBF, self.MTTR))
+        else:
+            self.logger.debug(f"Machine breakdown is disabled.")
+        # Machine instances initialization, populate the complete machine list and sequencing strategy
         for m in self.m_list:
             m.initialization(machine_list = self.m_list, sqc_method = job_sequencing_func)
         '''
@@ -109,7 +113,7 @@ class Narrator:
             yield self.env.timeout(job_arrival_interval)
             # produce the trajectory of job, by shuffling the sequence seed
             self.rng.shuffle(trajectory_seed)
-            # randomly a produce processing time array of job, this is THEORATICAL value, not actual value if variance exists
+            # produce a random processing time array of job, this is THEORATICAL value, not actual value if variance is enabled
             ptl = self.rng.integers(low = self.pt_range[0], high = self.pt_range[1]+1, size = [self.m_no])
             # new job instance
             job_instance = Job(
@@ -128,12 +132,12 @@ class Narrator:
             # after creating a job, assign it to the first machine along its trajectory
             first_m = trajectory_seed[0]
             self.m_list[first_m].job_arrival(job_instance)
-            # update the index of job
+            # increase the running job index
             self.j_idx += 1
 
 
     # periodicall disable machines
-    def process_machine_breakdown(self, m_idx:int, random_MTBF:bool, random_MTTR:bool):
+    def process_machine_breakdown(self, m_instance:Machine, random_MTBF:bool, random_MTTR:bool):
         while self.env.now < self.span:
             # draw the time interval between two break downs and the down time
             if random_MTBF:
@@ -144,19 +148,19 @@ class Narrator:
                 bkd_t = np.around(self.rng.uniform(self.MTTR * 0.5, self.MTTR * 1.5), decimals = 1)
             else:
                 bkd_t = self.MTTR
-            # if machine is currently running, the breakdown will commence after current operation
+            # if machine is currently running, the breakdown will commence right after current operation
             # but get the actual beging and end time first
             yield self.env.timeout(MTBF_interval)
-            actual_begin = max(self.m_list[m_idx].hidden_release_T, self.env.now)
+            actual_begin = max(m_instance.hidden_release_T, self.env.now)
             actual_end = actual_begin + bkd_t
             # wait till actual breakdown time
             yield self.env.timeout(actual_begin - self.env.now)
             # when we reach the actual breakdown time, switch off machine
-            self.m_list[m_idx].working_event = self.env.event()
+            m_instance.working_event = self.env.event()
             # restoration time is the sum of actual begin time and expected down time (MTTR)
-            self.m_list[m_idx].release_T = actual_begin + self.MTTR
-            self.m_list[m_idx].status = "down"
-            self.logger.debug(f"{self.env.now} > BKD on: Machine {m_idx} will be down for {bkd_t}, till {actual_begin + self.MTTR}"
+            m_instance.release_T = actual_begin + self.MTTR
+            m_instance.status = "down"
+            self.logger.info(f"{self.env.now} > BKD start: Machine {m_instance.m_idx} will be down for {bkd_t}, till {actual_begin + self.MTTR}"
                               + (". Invoke central scheduler to rebuild the schedule" if self.opt_mode else ""))
             #yield self.env.timeout(0)
             # rebuild schedule if necessary
@@ -165,8 +169,8 @@ class Narrator:
                     self.central_scheduler.build_schedule_event.succeed()
             # time of breakdown
             yield self.env.timeout(actual_end - self.env.now)
-            self.recorder.m_bkd_dict[m_idx].append([actual_begin, actual_end])
-            self.m_list[m_idx].working_event.succeed()
+            self.recorder.m_bkd_dict[m_instance.m_idx].append([actual_begin, actual_end])
+            m_instance.working_event.succeed()
 
     
     def post_simulation(self):

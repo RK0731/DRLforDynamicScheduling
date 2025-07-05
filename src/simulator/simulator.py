@@ -5,7 +5,6 @@ import logging.config
 import multiprocessing as mp
 import pandas as pd
 from pathlib import Path
-import shutil
 import simpy
 import time
 import traceback
@@ -57,11 +56,11 @@ class Shopfloor:
         self.recorder = Recorder(**kwargs) 
         # STEP 2. create machines
         self.m_list = []
-        self.logger.debug("Creating {} machines on shopfloor ".format(kwargs['m_no']))
+        self.logger.debug(f"Creating {kwargs['m_no']} machines on shopfloor ")
         for i in range(kwargs['m_no']):
             self.m_list.append(Machine(env = self.env, logger = self.logger, recorder = self.recorder, m_idx = i, **kwargs))
-        # STEP 3: create the event narrator of dynamic events
-        self.logger.debug("Initializing event narrator, machine breakdown: {}, processing time variability: {}".format(kwargs['machine_breakdown'], kwargs['processing_time_variability']))
+        # STEP 3. create the event narrator of dynamic events
+        self.logger.debug(f"Initializing event narrator, machine breakdown: {kwargs['machine_breakdown']}, processing time variability: {kwargs['processing_time_variability']}")
         self.narrator = Narrator(env = self.env, logger = self.logger, recorder = self.recorder, m_list = self.m_list, **kwargs)
 
     
@@ -84,7 +83,7 @@ class Shopfloor:
         # check for clash between randomness and use of optimization
         occ_variability = self.kwargs['random_MTTR'] or self.kwargs['processing_time_variability']
         if occ_variability and (self.kwargs['sqc_method'] == SequencingMethod.opt_scheduler):
-            Input = input("WARNING: Machine occupation time variance observed when using optimization algorithm-based scheduler! Processing time variance: {}, Random MTTR: {}.\nDo you still want to proceed? [Y/N]: ".format(
+            Input = input("WARNING: Machine occupation time variance enabled when using optimization algorithm-based scheduler! Processing time variance: {}, Random MTTR: {}.\nDo you still want to proceed? [Y/N]: ".format(
                 self.kwargs['processing_time_variability'], self.kwargs['random_MTTR']))
             if Input != "Y":
                 exit()

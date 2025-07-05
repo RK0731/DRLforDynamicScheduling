@@ -1,3 +1,7 @@
+"""
+Sequencing rules and place holders for mathematical-optimization-based schedulers
+"""
+
 import inspect
 import numpy as np
 
@@ -28,11 +32,11 @@ class SequencingMethod:
         return
 
     @classmethod 
-    # place holder for Google OR-Tools, will use the draw_from_schedule function after creating a central scheduler object
+    # place holder for Google OR-Tools, will invokdes the draw_from_schedule function after creating a central scheduler object
     def ORTools(cls, jobs, *args, **kwargs): 
         return
 
-    @classmethod 
+    @classmethod
     # place holder, will use the function after creating a DRL scheduler
     def DRL_scheduler(cls, jobs, *args, **kwargs): 
         return

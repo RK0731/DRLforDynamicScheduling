@@ -1,8 +1,11 @@
 gurobipy==9.5.2
-numpy==1.23.2
-matplotlib==3.5.3
-pandas==2.0.3
-scikit-learn==1.4.2
+h5py
+numpy>=2.2.0
+matplotlib>=3.10.0
+ortools==9.12.4544
+pandas>=2.2.0
+PyYAML>=6.0.2
+scikit-learn>=1.6.0
 simpy==4.1.1
 tabulate==0.8.9
-torch==2.5.0
+torch>=2.6.0

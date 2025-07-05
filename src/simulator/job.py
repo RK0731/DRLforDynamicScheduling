@@ -48,7 +48,7 @@ class Job:
         # data recording
         self.operation_record = []
         self.logger.info("{} > Job {} created, trajectory: {}, exp.pt: {}, actual pt: {}, due: {}".format(
-            self.env.now, self.j_idx, self.trajectory, self.remaining_pt, self.actual_remaining_pt, self.due))
+            self.env.now, self.j_idx, self.trajectory, [float(x) for x in self.remaining_pt], [float(x) for x in self.actual_remaining_pt], self.due))
 
 
     def after_arrival(self):
@@ -97,7 +97,7 @@ class Job:
         self.recorder.j_flowtime_dict[self.j_idx] = self.env.now - self.creation_T
         self.recorder.last_job_comp_T = self.env.now
         self.recorder.in_system_jobs.pop(self.j_idx)
-        self.logger.info("{} > Job {} completed".format(self.env.now, self.j_idx))
+        self.logger.info("{} > END: Job {} completed".format(self.env.now, self.j_idx))
         self.tardiness = self.env.now - self.due
 
     

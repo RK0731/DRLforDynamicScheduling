@@ -402,7 +402,7 @@ class GurobiOptimizer:
                 # run the optimization
                 model.optimize()
                 '''
-                PART IV: convert the gurobi tupledict to normal Python dict
+                PART IV: convert the gurobi tupledict to Python dict
                 '''
                 time_expense = round(time.time() - START_T, 3)
                 logger.debug("Optimization elapsed, model status: {}, time expense: {}s".format(

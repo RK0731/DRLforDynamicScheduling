@@ -3,6 +3,7 @@
 import argparse
 import inspect
 from pathlib import Path
+from typing import List
 
 from src.scheduler.sequencing_rule import SequencingMethod
 from src.simulator.simulator import Simulator, SimulatorMultiThread
@@ -17,8 +18,8 @@ parser.add_argument('-utl', '--E_utliz', default=0.6, action='store', type=float
 
 # job and processing time settings
 parser.add_argument('-dt', '--due_tightness', default=2, action='store', type=float, help='Due time tightness')
-parser.add_argument('-pt_r','--pt_range', default=[1,10], action='store', type=list, help='Range of processing time')
-parser.add_argument('-pt_v', '--processing_time_variability', default=False, action='store_true', help='Flag to use non-deterministic processing time? (boolean)')
+parser.add_argument('-pt_r','--pt_range', default=[1,10], action='store', type=List[int], help='Range of processing time')
+parser.add_argument('-pt_v', '--processing_time_variability', default=False, action='store_true', help='Flag to activate non-deterministic processing time (boolean)')
 parser.add_argument('-pt_cv', default=0.1, action='store', type=float, help='Coefficiency of variance of processing time')
 
 # machine breakdown settings
@@ -29,7 +30,7 @@ parser.add_argument('-mttr', '--MTTR', default=10, help='Mean time to repair')
 parser.add_argument('-rnd_mttr', '--random_MTTR', default=False, action='store_true', help='Use random MTTR')
 
 # logging and plotting settings
-parser.add_argument('-draw', '--draw_gantt', default=5, action='store', type=int, help='Any value greater than 0 would plot the gantt chart, always no-show when simulation span is longer than 200')
+parser.add_argument('-draw', '--draw_gantt', default=5, action='store', type=int, help='Any value greater than 0 would plot the gantt chart, strictly no-show for >200 simulation')
 parser.add_argument('-save_gantt', default=True, action='store_false', help='Save the gantt chart figure to log?')
 parser.add_argument('-ns', '--no_stream', default=False, action='store_false', help='Flag to disable stream logger (print to console)')
 
