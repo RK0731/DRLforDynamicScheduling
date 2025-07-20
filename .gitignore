@@ -1,6 +1,7 @@
 # Ignore a file or directory in the context root named "modules"
 modules
 tests
+writing
 
 # Ignore any files or directories within the subdirectory named "modules" 
 # in the context root
