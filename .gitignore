@@ -28,13 +28,13 @@ modules*
 
 # Ignore any files or folders whose names contain the pattern
 *rk_*
-*tests*
+*test*
 *cache*
 *.DS_Store*
 *.nfs*
 *.env*
 *document_sets*
-*logs
+*log
 *.ipynb_checkpoints*
 *.DS_Store*
 *.secret

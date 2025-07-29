@@ -291,16 +291,16 @@ class GurobiOptimizer:
                                  ):
         grb_msg = {2:'optimal', 3:'infeasible', 4:'infeasible or unbounded', 9:'time limit', 11:'interrupted'}
         START_T = time.time()
-        # get machines' release info
+        # get machines' release time
         machine_release_T = {m.m_idx: max(m.release_T, env.now) for m in m_list}
-        # get jobs' available time info
+        # get jobs' available time
         job_available_T = {_j_idx: max(in_system_jobs[_j_idx].available_T, env.now) for _j_idx in remaining_trajectories.keys()}
         # build the optimization model
         with gp.Env(empty=True) as grb_env:
             grb_env.setParam('LogToConsole', 0)
             grb_env.setParam('LogFile', str(Path(logger.handlers[0].baseFilename).parent / "gurobi.log"))
             grb_env.start()
-            with gp.Model(name="opt_scheduler", env=grb_env) as model:
+            with gp.Model(name="jsp_scheduler", env=grb_env) as model:
                 ''' 
                 PART I: create the variables and necessary pairs
                 '''
@@ -312,7 +312,7 @@ class GurobiOptimizer:
                 for _j_idx, _traj in remaining_trajectories.items():
                     # (j_idx, m_idx) pairing of begin time variables
                     pairOpBeginT += list(itertools.product([_j_idx], _traj))
-                    # pairing of consecutive machines
+                    # pairing of consecutive machines in sequence of operation
                     pairConsecM = list(zip(_traj, _traj[1:]))
                     # [(j1_idx, m1_idx), (j2_idx, m2_idx)] pairings of begin time variables for consecutive operations
                     pairOpSqc += [list(itertools.product([_j_idx], mp)) for mp in pairConsecM]
@@ -321,7 +321,8 @@ class GurobiOptimizer:
                     pairJobLastOp += [(_j_idx, _traj[-1])]
                 # continuous variables indicating the beginning time of all operations
                 varOpBeginT = model.addVars(pairOpBeginT, vtype=GRB.CONTINUOUS, name="varOpBeginT")
-                # 2. job completion time
+                # 2. job-specifc variables/metrics
+                # job completion time
                 varJobCompT = model.addVars(list(remaining_trajectories.keys()), vtype=GRB.CONTINUOUS, name="varJobCompT")
                 # discrepency of completion time, can be eother earliness or tardiness
                 varJobCompDiscr = model.addVars(list(remaining_trajectories.keys()), lb=-1000, vtype=GRB.CONTINUOUS, name="varJobCompDiscr")
@@ -346,8 +347,8 @@ class GurobiOptimizer:
                 constrOpSqc = model.addConstrs(
                     (varOpBeginT[j, m1] + in_system_jobs[j].pt_by_m_idx[m1] <= varOpBeginT[j, m2] for (j,m1), (j,m2) in pairOpSqc),
                     name = 'constrOpSqc')
-                # 2. job cannot be processed bafore required machine is released or itself became available
-                # 2.1 job's all operations can be processed only after machine release
+                # 2. job cannot be processed bafore becoming available or assigned machine is released
+                # 2.1 job's all operations can be processed only after machine release time
                 constrMachineRelease = model.addConstrs(
                     (varOpBeginT[j, m] >= machine_release_T[m] for j, m in pairOpBeginT),
                     name = 'constrMachineRelease')
@@ -385,7 +386,7 @@ class GurobiOptimizer:
                 model.update()
                 model.setParam('time_limit', 10)
                 # the primary (tier 1) objective of optimization, however, Gurobi can be "lazy"
-                # optimization process terminates as soon as Gurobi finds no improvements can be obtained
+                # optimization process terminates as soon as Gurobi finds no improvements of objective can be obtained
                 model.setObjective(varJobTardiness.sum(), GRB.MINIMIZE)
                 # therefore we use the secondary objective in hierachical optimization
                 # it can only be optimized without compromising the primary objective
