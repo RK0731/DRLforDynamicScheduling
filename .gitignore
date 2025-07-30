@@ -22,7 +22,7 @@ modules*
 **/modules
 **/.secrets
 **/output
-**/log
+**/logs
 **/charts
 **/__pycache__
 
