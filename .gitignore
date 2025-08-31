@@ -20,6 +20,7 @@ modules*
 
 # Ignore any files or directories at any level, including the context root, 
 **/modules
+**/DRL
 **/.secrets
 **/output
 **/logs

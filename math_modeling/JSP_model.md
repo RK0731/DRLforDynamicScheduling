@@ -1,28 +1,29 @@
-## Mathematical Optimization Model to Solve Job Shop Scheduling Problem
+# Mathematical Optimization Model to Solve Job Shop Scheduling Problem
 
-### 1. Index
+## 1. Index
 
 $m \in M : \text{Index of machine}$ \
 $j \in J : \text{Index of job}$
 
-### 2. Set
+## 2. Set
 
 $I_{j}^{j'} \subset J : \text{A set of machines that job } j \text{ and } j' \text{ both need to visit}$\
 $T_{j} = (m_1, m_2, ..., m_{\mid T_{j}\mid} ) : \text{Trajectory, an ordered set containing machine indices that job } j \text{ needs to visit}$\
 
-### 3. Paremeters
+## 3. Paremeters
 
 $t_{j,m} : \text{Expected processing time of job } j \text{ on machine } m $\
 $d_{j} : \text{Due time of job } j $\
 $r_{m} : \text{Release time of machine } m \text{, the estimated time for the machine to complete its current operation or recover from a breakdown, calculated from the start of the current scheduling cycle}$
 
-### 4. Decision Variables
+## 4. Decision Variables
 
 $b_{j,m} : \text{Time that job } j \text{ started to be processed on machine } m$\
 $c_{j} : \text{Completion time of job } j $\
 $p_{j,j',m} : \text{Precedence variable, equals 0 if job } j \text{ is processed on machine } m \text{ before job } j' $
 
-### 5. Objective and Constraints
+## 5. Objective and Constraints
+
 $\text{Objectives (decending by priority in hierarchical optimization):} $
 
 $\text{(a) Minimizing cumulative tardiness:} $

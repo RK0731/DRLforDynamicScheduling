@@ -1,4 +1,8 @@
 #!/usr/bin/env python
+"""
+Author: Liu Renke, dr.liu.renke@gmail.com
+Script to start the simulation
+"""
 
 import argparse
 import inspect
