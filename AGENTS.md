@@ -33,7 +33,8 @@ In a job shop with $M$ machines (`m_no`), jobs arrive dynamically over time rath
 ### 2.1 Entry Point & Utilities
 - `main.py`: CLI parser that maps user flags into `Simulator.run(**kwargs)`.
 - `src/utilities.py`:
-  - `setup_logger(stream, keep)`: Creates a timestamped directory under `logs/<YYYYMMDD-HHMMSSffffff>/sim.log`, prunes older log folders beyond `keep`, logs `DEBUG` details to `sim.log`, and streams `INFO` summaries to console.
+  - `setup_logger(stream, keep=3)`: Creates a timestamped directory under `logs/<YYYYMMDD-HHMMSSffffff>/sim.log`, prunes older log folders beyond `keep=3` (retaining only the 3 most recent text log folders while preserving `logs/simulation.db`), logs `DEBUG` details to `sim.log`, and streams `INFO` summaries to console.
+  - `SimulationDatabase(db_path)`: Manages the persistent SQLite database (`logs/simulation.db` by default) containing 6 relational tables (`runs`, `jobs`, `operations`, `breakdowns`, `schedule_cycles`, `sim_events`) with WAL mode and foreign key constraints. Flushes an entire episode atomically via `save_episode(...)` at the end of the simulation.
   - `draw_gantt_chart(logger, recorder, **kwargs)`: Plots each job's operations (`recorder.j_operation_dict`) as color-coded horizontal bars and overlays machine breakdowns (`recorder.m_bkd_dict`) as hatched white bars, saving `gantt_chart.png` inside the active log folder.
 
 ### 2.2 Discrete-Event Simulator (`src/simulator/`)

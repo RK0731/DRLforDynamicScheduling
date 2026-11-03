@@ -158,23 +158,37 @@ class Machine:
             PART II: After the sequencing decision, update entity states and execute the operation
             """
             self.status = "processing"
-            actual_pt = self.after_decision()
-            self.logger.debug(
-                "{} > {}. Machine {} process Job {}, expected PT: {}, actual: {}".format(
-                    self.env.now,
-                    decision_type,
-                    self.m_idx,
-                    self.picked_j_instance.j_idx,
-                    self.picked_j_instance.remaining_operations[0][1],
-                    actual_pt,
-                )
+            actual_pt = self.after_decision(decision_type=decision_type)
+            start_msg = "{} > {}. Machine {} process Job {}, expected PT: {}, actual: {}".format(
+                self.env.now,
+                decision_type,
+                self.m_idx,
+                self.picked_j_instance.j_idx,
+                self.picked_j_instance.remaining_operations[0][1],
+                actual_pt,
+            )
+            self.logger.debug(start_msg)
+            self.recorder.record_event(
+                self.env.now,
+                "DEBUG",
+                "OP_START",
+                m_idx=self.m_idx,
+                j_idx=self.picked_j_instance.j_idx,
+                message=start_msg,
             )
             # Simulate the operation processing duration (yield actual processing time)
             yield self.env.timeout(actual_pt)
-            self.logger.info(
-                "{} > OUT: Job {} left Machine {}".format(
-                    self.env.now, self.picked_j_instance.j_idx, self.m_idx
-                )
+            out_msg = "{} > OUT: Job {} left Machine {}".format(
+                self.env.now, self.picked_j_instance.j_idx, self.m_idx
+            )
+            self.logger.info(out_msg)
+            self.recorder.record_event(
+                self.env.now,
+                "INFO",
+                "OP_OUT",
+                m_idx=self.m_idx,
+                j_idx=self.picked_j_instance.j_idx,
+                message=out_msg,
             )
 
             """
@@ -195,14 +209,18 @@ class Machine:
     def process_idle(self):
         """SimPy sub-process suspending the machine while its queue is empty."""
         self.status = "idle"
-        self.logger.info("{} > IDL on: Machine {} became idle".format(self.env.now, self.m_idx))
+        idl_on_msg = "{} > IDL on: Machine {} became idle".format(self.env.now, self.m_idx)
+        self.logger.info(idl_on_msg)
+        self.recorder.record_event(self.env.now, "INFO", "IDL_ON", m_idx=self.m_idx, message=idl_on_msg)
         # Reset `sufficient_stock` event and wait until a new job arrives in `self.queue`
         self.sufficient_stock = self.env.event()
         yield self.sufficient_stock
         # If a machine breakdown is active when the job arrives, wait for repair before resuming
         if not self.working_event.triggered:
             yield self.env.process(self.process_breakdown())
-        self.logger.info("{} > IDL off: Machine {} replenished".format(self.env.now, self.m_idx))
+        idl_off_msg = "{} > IDL off: Machine {} replenished".format(self.env.now, self.m_idx)
+        self.logger.info(idl_off_msg)
+        self.recorder.record_event(self.env.now, "INFO", "IDL_OFF", m_idx=self.m_idx, message=idl_off_msg)
 
     def process_breakdown(self):
         """SimPy sub-process suspending production while the machine undergoes repair."""
@@ -211,9 +229,12 @@ class Machine:
         yield self.working_event
         delay = round(self.env.now - start, 2)
         self.breakdown_record.append([(self.m_idx, start, delay)])
-        self.logger.info(
+        self.recorder.update_last_breakdown_delay(self.m_idx, delay)
+        bkd_end_msg = (
             f"{self.env.now} > BKD end: Machine {self.m_idx} repaired, delayed the production for {delay} units"
         )
+        self.logger.info(bkd_end_msg)
+        self.recorder.record_event(self.env.now, "INFO", "BKD_END", m_idx=self.m_idx, message=bkd_end_msg)
 
     def job_arrival(self, arriving_job: Job) -> None:
         """Handle a job arriving at this machine's queue (either newly created or routed from another machine)."""
@@ -235,7 +256,11 @@ class Machine:
         extra_msg = ", scheduled next op/job: {}".format(
             self.next_job_in_schedule if self.next_job_in_schedule >= 0 else 'None'
         )
-        self.logger.info(common_msg + extra_msg if self.schedule_mode else common_msg)
+        full_in_msg = common_msg + extra_msg if self.schedule_mode else common_msg
+        self.logger.info(full_in_msg)
+        self.recorder.record_event(
+            self.env.now, "INFO", "JOB_IN", m_idx=self.m_idx, j_idx=arriving_job.j_idx, message=full_in_msg
+        )
 
         # If centralized schedule mode is active and the machine is waiting in strategic idleness,
         # check whether the newly arrived job is the required next scheduled job
@@ -243,7 +268,16 @@ class Machine:
             if not self.required_job_in_queue_event.triggered:
                 self.required_job_in_queue_event.succeed()
                 if self.status == "strategic_idle":
-                    self.logger.info("{} > Str.Idle end: Machine {} reactivated".format(self.env.now, self.m_idx))
+                    si_end_msg = "{} > Str.Idle end: Machine {} reactivated".format(self.env.now, self.m_idx)
+                    self.logger.info(si_end_msg)
+                    self.recorder.record_event(
+                        self.env.now,
+                        "INFO",
+                        "STR_IDL_END",
+                        m_idx=self.m_idx,
+                        j_idx=arriving_job.j_idx,
+                        message=si_end_msg,
+                    )
 
     def check_strategic_idleness(self) -> None:
         """
@@ -257,13 +291,20 @@ class Machine:
             if self.status != "strategic_idle":
                 self.status = "strategic_idle"
                 self.recorder.sqc_cnt_SI += 1
-                self.logger.info(
-                    "{} > STR.IDL. on: Machine {} suspended, waiting for Job {}, current queue: {}".format(
-                        self.env.now,
-                        self.m_idx,
-                        self.next_job_in_schedule,
-                        [j.j_idx for j in self.queue],
-                    )
+                si_on_msg = "{} > STR.IDL. on: Machine {} suspended, waiting for Job {}, current queue: {}".format(
+                    self.env.now,
+                    self.m_idx,
+                    self.next_job_in_schedule,
+                    [j.j_idx for j in self.queue],
+                )
+                self.logger.info(si_on_msg)
+                self.recorder.record_event(
+                    self.env.now,
+                    "INFO",
+                    "STR_IDL_ON",
+                    m_idx=self.m_idx,
+                    j_idx=self.next_job_in_schedule if self.next_job_in_schedule >= 0 else None,
+                    message=si_on_msg,
                 )
             self.required_job_in_queue_event = self.env.event()
 
@@ -276,9 +317,18 @@ class Machine:
             if not self.required_job_in_queue_event.triggered:
                 self.required_job_in_queue_event.succeed()
                 if self.status == "strategic_idle":
-                    self.logger.info("{} > Str.Idle end: Machine {} reactivated".format(self.env.now, self.m_idx))
+                    si_end_msg = "{} > Str.Idle end: Machine {} reactivated".format(self.env.now, self.m_idx)
+                    self.logger.info(si_end_msg)
+                    self.recorder.record_event(
+                        self.env.now,
+                        "INFO",
+                        "STR_IDL_END",
+                        m_idx=self.m_idx,
+                        j_idx=self.next_job_in_schedule,
+                        message=si_end_msg,
+                    )
 
-    def after_decision(self) -> float:
+    def after_decision(self, decision_type: str = "Passive") -> float:
         """
         Update machine and job timing attributes immediately after a job is selected for processing.
         Returns the actual processing time of the upcoming operation.
@@ -287,8 +337,23 @@ class Machine:
         actual_pt = self.picked_j_instance.actual_remaining_pt[0]  # actual processing time (may differ if pt_cv > 0)
         wait = self.env.now - self.picked_j_instance.arrival_T  # queuing wait time before being picked
 
-        # Record this operation on the job instance
-        self.picked_j_instance.after_decision(self.m_idx, wait)
+        # Look up expected start time in the centralized schedule (if schedule_mode is active)
+        scheduled_begin_t = None
+        if self.schedule_mode and self.central_scheduler is not None:
+            j_ops = self.central_scheduler.j_op_by_schedule.get(self.picked_j_instance.j_idx, [])
+            for m_id, exp_begin in j_ops:
+                if int(m_id) == int(self.m_idx):
+                    scheduled_begin_t = float(exp_begin)
+                    break
+
+        # Record this operation on the job instance and in the shared Recorder
+        self.picked_j_instance.after_decision(
+            self.m_idx,
+            wait,
+            decision_type=decision_type,
+            queue_len=len(self.queue),
+            scheduled_begin_t=scheduled_begin_t,
+        )
 
         # Update machine release times and cumulative runtime
         self.release_T = self.env.now + expected_pt

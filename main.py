@@ -46,7 +46,9 @@ parser.add_argument('-mttr', '--MTTR', default=10.0, action='store', type=float,
 parser.add_argument('-rnd_mttr', '--random_MTTR', default=False, action='store_true',
                     help='Sample repair duration from a uniform distribution [0.5*MTTR, 1.5*MTTR]')
 
-# 4. Logging and plotting parameters
+# 4. Logging, database, and plotting parameters
+parser.add_argument('-db', '--db_path', default=None, action='store', type=str,
+                    help='Path to the persistent SQLite database file (defaults to logs/simulation.db)')
 parser.add_argument('-draw', '--draw_gantt', default=5, action='store', type=int,
                     help='Seconds to display Gantt chart pop-up (>0 shows plot; disabled automatically if span >= 250)')
 parser.add_argument('-save_gantt', default=True, action='store_false',
@@ -79,5 +81,6 @@ if __name__ == '__main__':
         stream=not args.no_stream,
         draw_gantt=args.draw_gantt,
         save_gantt=args.save_gantt,
+        db_path=args.db_path,
         sqc_method=methods[args.sqc_method],
     )

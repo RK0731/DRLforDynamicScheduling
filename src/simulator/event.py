@@ -5,9 +5,11 @@ simulation metrics (`Narrator` and `Recorder`).
 """
 
 # standard imports
+from datetime import datetime as dt
+import json
 from logging import Logger
 import time
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import numpy as np
 from simpy import Environment
@@ -18,6 +20,7 @@ from .job import Job
 from .machine import Machine
 from ..scheduler.sequencing_rule import SequencingMethod
 from ..scheduler.scheduler import CentralScheduler
+from ..utilities import SimulationDatabase
 
 
 class Narrator:
@@ -166,7 +169,7 @@ class Narrator:
             # Trigger the central scheduler to rebuild the schedule if optimization mode is active
             if self.opt_mode:
                 if not self.central_scheduler.build_schedule_event.triggered:
-                    self.central_scheduler.build_schedule_event.succeed()
+                    self.central_scheduler.trigger_reschedule("JOB_ARRIVAL")
                     self.logger.debug("New job arrived, call central scheduler to build schedule\n" + "-" * 88)
 
             # Route the newly created job to the first machine in its trajectory
@@ -213,15 +216,26 @@ class Narrator:
             m_instance.release_T = self.env.now + self.MTTR
             m_instance.hidden_release_T = self.env.now + bkd_t
             m_instance.status = "down"
-            self.logger.info(
+            bkd_start_msg = (
                 f"{self.env.now} > BKD start: Machine {m_instance.m_idx} will be down for {bkd_t}, till {expected_end}"
                 + (". Invoke central scheduler to rebuild the schedule" if self.opt_mode else "")
+            )
+            self.logger.info(bkd_start_msg)
+            self.recorder.record_event(
+                self.env.now, "INFO", "BKD_START", m_idx=m_instance.m_idx, message=bkd_start_msg
+            )
+            self.recorder.record_breakdown(
+                m_idx=m_instance.m_idx,
+                begin_t=actual_begin,
+                end_t=actual_end,
+                expected_end_t=expected_end,
+                actual_duration=bkd_t,
             )
 
             # Trigger central scheduler to rebuild the schedule around the newly unavailable machine
             if self.opt_mode:
                 if not self.central_scheduler.build_schedule_event.triggered:
-                    self.central_scheduler.build_schedule_event.succeed()
+                    self.central_scheduler.trigger_reschedule("MACHINE_BREAKDOWN")
 
             # Wait for the actual repair duration to elapse
             yield self.env.timeout(bkd_t)
@@ -237,12 +251,13 @@ class Narrator:
     def post_simulation(self) -> None:
         """
         Verify simulation completion, check for schedule-execution mismatches (under deterministic settings),
-        and print summary tables of configuration and performance metrics (tardiness and flowtime).
+        print summary tables of configuration and performance metrics, and persist the episode to SQLite.
         """
         # 1. Verify that all created jobs have completed all their operations
         if len(self.recorder.j_operation_dict) != self.j_idx:
             msg = "Simulation FAILED, not all jobs have successfully completed their operations"
             self.logger.error(msg)
+            self.recorder.record_event(self.env.now, "ERROR", "SIM_FAILED", message=msg)
 
         # 2. Save any over-extended optimization problem instances (>1s solve time) to JSON
         if self.opt_mode and self.central_scheduler.ext_prob_log:
@@ -262,18 +277,18 @@ class Narrator:
                             "M{}, ET:{}, AT:{}".format(expected[0], expected[1], actual[1])
                         )
             if mismatch:
-                self.logger.warning(
-                    "Schedule and execution MISMATCH:\n{}\n".format(
-                        tabulate(
-                            [
-                                ["J.idx", "Mismatch"],
-                                *[[j_idx, description] for j_idx, description in mismatch.items()],
-                            ],
-                            headers="firstrow",
-                            tablefmt="psql",
-                        )
+                mismatch_msg = "Schedule and execution MISMATCH:\n{}\n".format(
+                    tabulate(
+                        [
+                            ["J.idx", "Mismatch"],
+                            *[[j_idx, description] for j_idx, description in mismatch.items()],
+                        ],
+                        headers="firstrow",
+                        tablefmt="psql",
                     )
                 )
+                self.logger.warning(mismatch_msg)
+                self.recorder.record_event(self.env.now, "WARNING", "SCHEDULE_MISMATCH", message=mismatch_msg)
 
         # 4. Format simulation configuration summary table
         header = ["Category", "Number", "Details"]
@@ -316,6 +331,7 @@ class Narrator:
 
         last_comp_t = max(self.recorder.last_job_comp_T, 1e-6)
         avg_cum_m_run_t = sum(m.cumulative_runtime for m in self.m_list) / self.m_no / last_comp_t
+        actual_utliz = round(avg_cum_m_run_t, 4)
         sim_config = [
             "Sim",
             "N.A.",
@@ -344,24 +360,62 @@ class Narrator:
         )
 
         # 5. Format and log performance metrics (Tardiness and Flowtime)
+        mean_tard = max_tard = mean_flow = max_flow = None
         if self.recorder.j_tardiness_dict and self.j_idx > 0:
             cum_tard = sum(self.recorder.j_tardiness_dict.values())
-            max_tard = max(self.recorder.j_tardiness_dict.values())
+            max_tard = round(float(max(self.recorder.j_tardiness_dict.values())), 2)
+            mean_tard = round(float(cum_tard / self.j_idx), 2)
             cum_flow = sum(self.recorder.j_flowtime_dict.values())
-            max_flow = max(self.recorder.j_flowtime_dict.values())
+            max_flow = round(float(max(self.recorder.j_flowtime_dict.values())), 2)
+            mean_flow = round(float(cum_flow / self.j_idx), 2)
             self.logger.info(
                 'Performance:\n{}\n'.format(
                     tabulate(
                         [
                             ["Category", "value"],
-                            ["Tardiness", "max: {}, mean: {}".format(round(max_tard, 2), round(cum_tard / self.j_idx, 2))],
-                            ["Flowtime", "max: {}, mean: {}".format(round(max_flow, 2), round(cum_flow / self.j_idx, 2))],
+                            ["Tardiness", "max: {}, mean: {}".format(max_tard, mean_tard)],
+                            ["Flowtime", "max: {}, mean: {}".format(max_flow, mean_flow)],
                         ],
                         headers="firstrow",
                         tablefmt="grid",
                     )
                 )
             )
+
+        # 6. Flush the entire episode's structured records to the persistent SQLite database
+        run_record = {
+            "created_at": dt.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "seed": int(self.seed),
+            "sqc_method": str(sqc_name),
+            "m_no": int(self.m_no),
+            "span": float(self.span),
+            "actual_span": round(float(self.recorder.last_job_comp_T), 2),
+            "e_utliz": float(self.E_utliz),
+            "actual_utliz": float(actual_utliz),
+            "due_tightness": float(self.due_tightness),
+            "pt_min": float(self.pt_range[0]),
+            "pt_max": float(self.pt_range[1]),
+            "pt_cv": float(self.pt_cv),
+            "machine_bkd": int(bool(self.machine_breakdown)),
+            "mtbf": float(self.MTBF) if self.machine_breakdown else None,
+            "random_mtbf": int(bool(self.random_MTBF)) if self.machine_breakdown else None,
+            "mttr": float(self.MTTR) if self.machine_breakdown else None,
+            "random_mttr": int(bool(self.random_MTTR)) if self.machine_breakdown else None,
+            "total_jobs": int(self.j_idx),
+            "completed_jobs": int(len(self.recorder.j_operation_dict)),
+            "sqc_cnt_opt": int(self.recorder.sqc_cnt_opt),
+            "sqc_cnt_si": int(self.recorder.sqc_cnt_SI),
+            "sqc_cnt_reactive": int(self.recorder.sqc_cnt_reactive),
+            "sqc_cnt_passive": int(self.recorder.sqc_cnt_passive),
+            "wall_time_s": round(float(wall_time), 5),
+            "opt_time_s": round(float(self.recorder.opt_time_expense), 5),
+            "mean_tardiness": mean_tard,
+            "max_tardiness": max_tard,
+            "mean_flowtime": mean_flow,
+            "max_flowtime": max_flow,
+        }
+        run_id = self.recorder.flush_to_database(run_record, db_path=self.kwargs.get('db_path'))
+        self.logger.info(f"Episode records persisted to SQLite database (run_id={run_id})")
 
     def build_sqc_experience_repository(self, m_list: List[Machine]) -> None:
         """Initialize per-machine experience dictionaries for DRL sequencing training."""
@@ -381,7 +435,11 @@ class Narrator:
 
 
 class Recorder:
-    """Shared data container that tracks active jobs, completed operations, breakdowns, and KPIs."""
+    """
+    Shared in-memory data container that tracks active jobs, completed operations, breakdowns,
+    rescheduling cycles, chronological events, and KPIs during a simulation episode,
+    then flushes all records to the persistent SQLite database in a single batch transaction.
+    """
 
     def __init__(self, **kwargs):
         for k, v in kwargs.items():
@@ -393,6 +451,7 @@ class Recorder:
         self.sqc_cnt_opt = self.sqc_cnt_SI = self.sqc_cnt_reactive = self.sqc_cnt_passive = 0
         # Active and completed job records
         self.in_system_jobs: Dict[int, Job] = {}
+        self.all_jobs_dict: Dict[int, Job] = {}
         self.j_operation_dict = {}
         self.j_tardiness_dict = {}
         self.j_flowtime_dict = {}
@@ -403,4 +462,93 @@ class Recorder:
         self.expected_tardiness_dict = {}
         # Aggregate performance metric
         self.cumulative_tardiness: float = 0.0
+
+        # Structured buffers for SQLite batch persistence
+        self.operations_list: list = []
+        self.breakdowns_list: list = []
+        self.schedule_cycles_list: list = []
+        self.sim_events_list: list = []
+
+    def record_event(
+        self,
+        sim_t: float,
+        level: str,
+        event_type: str,
+        m_idx: Optional[int] = None,
+        j_idx: Optional[int] = None,
+        message: str = "",
+    ) -> None:
+        """Append a structured simulation event to the in-memory buffer for the `sim_events` table."""
+        self.sim_events_list.append(
+            (
+                round(float(sim_t), 2),
+                str(level),
+                str(event_type),
+                int(m_idx) if m_idx is not None else None,
+                int(j_idx) if j_idx is not None else None,
+                str(message),
+            )
+        )
+
+    def record_breakdown(
+        self,
+        m_idx: int,
+        begin_t: float,
+        end_t: float,
+        expected_end_t: float,
+        actual_duration: float,
+    ) -> None:
+        """Append a machine breakdown record to the in-memory buffer for the `breakdowns` table."""
+        self.breakdowns_list.append(
+            [
+                int(m_idx),
+                round(float(begin_t), 2),
+                round(float(end_t), 2),
+                round(float(expected_end_t), 2),
+                round(float(actual_duration), 2),
+                0.0,  # prod_delay updated if a job waits on this breakdown in `Machine.process_breakdown`
+            ]
+        )
+
+    def update_last_breakdown_delay(self, m_idx: int, prod_delay: float) -> None:
+        """Update `prod_delay` on the most recent breakdown record for machine `m_idx`."""
+        for bkd in reversed(self.breakdowns_list):
+            if bkd[0] == int(m_idx):
+                bkd[5] = round(float(prod_delay), 2)
+                break
+
+    def flush_to_database(self, run_record: dict, db_path=None) -> int:
+        """
+        Convert in-memory job, operation, breakdown, schedule_cycle, and sim_event buffers
+        into relational tuples and save them to the persistent SQLite database.
+        """
+        jobs_records = []
+        for j_idx in sorted(self.all_jobs_dict.keys()):
+            job = self.all_jobs_dict[j_idx]
+            flowtime = self.j_flowtime_dict.get(j_idx)
+            tardiness = self.j_tardiness_dict.get(j_idx)
+            jobs_records.append(
+                (
+                    int(job.j_idx),
+                    round(float(job.creation_T), 2),
+                    round(float(job.due), 2),
+                    job.completion_T,
+                    str(job.status),
+                    round(float(tardiness), 2) if tardiness is not None else None,
+                    round(float(flowtime), 2) if flowtime is not None else None,
+                    json.dumps(job.initial_trajectory),
+                    json.dumps(job.initial_exp_pt),
+                    json.dumps(job.initial_actual_pt),
+                )
+            )
+
+        db = SimulationDatabase(db_path=db_path)
+        return db.save_episode(
+            run_record=run_record,
+            jobs_records=jobs_records,
+            operations_records=self.operations_list,
+            breakdowns_records=[tuple(b) for b in self.breakdowns_list],
+            schedule_cycles_records=self.schedule_cycles_list,
+            sim_events_records=self.sim_events_list,
+        )
 

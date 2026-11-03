@@ -4,19 +4,22 @@ Author: Liu Renke
 Utility module providing logging configuration and Gantt chart visualization for the simulator.
 """
 
-import copy
 from datetime import datetime as dt
+import copy
 import json
 import logging
 from logging.config import dictConfig
 from pathlib import Path
 import shutil
+import sqlite3
+from typing import Optional
 
 import matplotlib.pyplot as plt
 import numpy as np
 
-# Root directory where all timestamped simulation log folders are stored
+# Root directory where all timestamped simulation log folders and the persistent SQLite database are stored
 LOG_ROOT_DIR = Path.cwd() / 'logs'
+DEFAULT_DB_PATH = LOG_ROOT_DIR / 'simulation.db'
 LOG_DIR = LOG_ROOT_DIR / dt.now().strftime("%Y%m%d-%H%M%S%f")
 
 # Base logging dictionary configuration:
@@ -63,16 +66,17 @@ LOG_CONFIG = {
 }
 
 
-def setup_logger(stream: bool = True, keep: int = 5) -> logging.Logger:
+def setup_logger(stream: bool = True, keep: int = 3) -> logging.Logger:
     """
-    Create a timestamped log directory, prune old log directories beyond `keep`,
+    Create a timestamped log directory, prune old log directories beyond `keep` (default 3),
     and initialize the 'sim_logger' logger instance.
+    Note: Non-directory files in `LOG_ROOT_DIR` (such as `simulation.db`) are never deleted.
     """
     # Generate a fresh timestamped folder for this simulation run
     current_log_dir = LOG_ROOT_DIR / dt.now().strftime("%Y%m%d-%H%M%S%f")
     current_log_dir.mkdir(parents=True, exist_ok=True)
 
-    # Prune obsolete log folders from root logging directory (ignore non-directory files such as .DS_Store)
+    # Prune obsolete log folders from root logging directory (ignore non-directory files such as simulation.db)
     folders = [f for f in LOG_ROOT_DIR.iterdir() if f.is_dir()]
     folders.sort(key=lambda p: p.stat().st_mtime, reverse=True)
     for folder_path in folders[keep:]:
@@ -88,7 +92,7 @@ def setup_logger(stream: bool = True, keep: int = 5) -> logging.Logger:
     return logging.getLogger("sim_logger")
 
 
-def create_logger(log_dir: Path = Path('./log'), stream: bool = True, keep: int = 10) -> logging.Logger:
+def create_logger(log_dir: Path = Path('./log'), stream: bool = True, keep: int = 3) -> logging.Logger:
     """
     Alternative logger factory that loads configuration from `config/logger_config.json` if present,
     or falls back to `setup_logger`.
@@ -131,6 +135,251 @@ def create_logger(log_dir: Path = Path('./log'), stream: bool = True, keep: int 
         shutil.rmtree(folder_path, ignore_errors=True)
 
     return logger
+
+
+class SimulationDatabase:
+    """
+    Persistent SQLite database manager for storing structured simulation episodes.
+    Maintains 6 relational tables:
+      1. `runs`            - Episode configuration parameters and aggregate KPIs
+      2. `jobs`            - Per-job arrival, due date, trajectory, processing times, and tardiness/flowtime
+      3. `operations`      - Per-operation execution details, waiting time, and scheduled vs. actual start time
+      4. `breakdowns`      - Machine breakdown intervals, expected repair times, and production delays
+      5. `schedule_cycles` - Centralized optimization rescheduling snapshots, solver status, and solve time
+      6. `sim_events`      - Chronological discrete-event trace across machines, jobs, and scheduler
+    All data for an episode is buffered in `Recorder` during `env.run()` and flushed in a single
+    atomic transaction at the end of the episode (`save_episode`) to avoid disk I/O overhead during simulation.
+    """
+
+    SCHEMA_SQL = """
+    PRAGMA foreign_keys = ON;
+
+    CREATE TABLE IF NOT EXISTS runs (
+        run_id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        created_at       TEXT    NOT NULL,
+        seed             INTEGER NOT NULL,
+        sqc_method       TEXT    NOT NULL,
+        m_no             INTEGER NOT NULL,
+        span             REAL    NOT NULL,
+        actual_span      REAL,
+        e_utliz          REAL    NOT NULL,
+        actual_utliz     REAL,
+        due_tightness    REAL    NOT NULL,
+        pt_min           REAL    NOT NULL,
+        pt_max           REAL    NOT NULL,
+        pt_cv            REAL    NOT NULL,
+        machine_bkd      INTEGER NOT NULL,
+        mtbf             REAL,
+        random_mtbf      INTEGER,
+        mttr             REAL,
+        random_mttr      INTEGER,
+        total_jobs       INTEGER,
+        completed_jobs   INTEGER,
+        sqc_cnt_opt      INTEGER DEFAULT 0,
+        sqc_cnt_si       INTEGER DEFAULT 0,
+        sqc_cnt_reactive INTEGER DEFAULT 0,
+        sqc_cnt_passive  INTEGER DEFAULT 0,
+        wall_time_s      REAL,
+        opt_time_s       REAL    DEFAULT 0.0,
+        mean_tardiness   REAL,
+        max_tardiness    REAL,
+        mean_flowtime    REAL,
+        max_flowtime     REAL
+    );
+
+    CREATE TABLE IF NOT EXISTS jobs (
+        run_id           INTEGER NOT NULL,
+        j_idx            INTEGER NOT NULL,
+        creation_t       REAL    NOT NULL,
+        due_t            REAL    NOT NULL,
+        completion_t     REAL,
+        status           TEXT    NOT NULL,
+        tardiness        REAL,
+        flowtime         REAL,
+        trajectory_json  TEXT    NOT NULL,
+        exp_pt_json      TEXT    NOT NULL,
+        actual_pt_json   TEXT    NOT NULL,
+        PRIMARY KEY (run_id, j_idx),
+        FOREIGN KEY (run_id) REFERENCES runs(run_id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS operations (
+        run_id            INTEGER NOT NULL,
+        j_idx             INTEGER NOT NULL,
+        op_seq            INTEGER NOT NULL,
+        m_idx             INTEGER NOT NULL,
+        decision_type     TEXT    NOT NULL,
+        queue_len_at_dec  INTEGER,
+        arrival_t         REAL    NOT NULL,
+        begin_t           REAL    NOT NULL,
+        end_t             REAL    NOT NULL,
+        wait_t            REAL    NOT NULL,
+        expected_pt       REAL    NOT NULL,
+        actual_pt         REAL    NOT NULL,
+        scheduled_begin_t REAL,
+        PRIMARY KEY (run_id, j_idx, op_seq),
+        FOREIGN KEY (run_id, j_idx) REFERENCES jobs(run_id, j_idx) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS breakdowns (
+        bkd_id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id           INTEGER NOT NULL,
+        m_idx            INTEGER NOT NULL,
+        begin_t          REAL    NOT NULL,
+        end_t            REAL    NOT NULL,
+        expected_end_t   REAL    NOT NULL,
+        actual_duration  REAL    NOT NULL,
+        prod_delay       REAL    DEFAULT 0.0,
+        FOREIGN KEY (run_id) REFERENCES runs(run_id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS schedule_cycles (
+        cycle_id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id           INTEGER NOT NULL,
+        sim_t            REAL    NOT NULL,
+        trigger_type     TEXT,
+        num_jobs         INTEGER NOT NULL,
+        num_ops          INTEGER NOT NULL,
+        solver_status    TEXT    NOT NULL,
+        solve_time_s     REAL    NOT NULL,
+        m_schedule_json  TEXT    NOT NULL,
+        j_schedule_json  TEXT    NOT NULL,
+        FOREIGN KEY (run_id) REFERENCES runs(run_id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS sim_events (
+        event_id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id           INTEGER NOT NULL,
+        sim_t            REAL    NOT NULL,
+        level            TEXT    NOT NULL,
+        event_type       TEXT    NOT NULL,
+        m_idx            INTEGER,
+        j_idx            INTEGER,
+        message          TEXT,
+        FOREIGN KEY (run_id) REFERENCES runs(run_id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_runs_sqc_method       ON runs(sqc_method);
+    CREATE INDEX IF NOT EXISTS idx_operations_run_m      ON operations(run_id, m_idx);
+    CREATE INDEX IF NOT EXISTS idx_breakdowns_run_m      ON breakdowns(run_id, m_idx);
+    CREATE INDEX IF NOT EXISTS idx_schedule_cycles_run   ON schedule_cycles(run_id, sim_t);
+    CREATE INDEX IF NOT EXISTS idx_sim_events_run_time   ON sim_events(run_id, sim_t);
+    CREATE INDEX IF NOT EXISTS idx_sim_events_run_type   ON sim_events(run_id, event_type);
+    """
+
+    def __init__(self, db_path: Optional[Path] = None):
+        self.db_path = Path(db_path) if db_path is not None else DEFAULT_DB_PATH
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._init_schema()
+
+    def _init_schema(self) -> None:
+        """Create the 6 tables and indexes if they do not exist, and enable WAL mode for concurrency."""
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            conn.execute("PRAGMA journal_mode = WAL;")
+            conn.executescript(self.SCHEMA_SQL)
+
+    def save_episode(
+        self,
+        run_record: dict,
+        jobs_records: list,
+        operations_records: list,
+        breakdowns_records: list,
+        schedule_cycles_records: list,
+        sim_events_records: list,
+    ) -> int:
+        """
+        Flush an entire simulation episode into the SQLite database in a single transaction.
+        Returns the newly generated `run_id`.
+        """
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            conn.execute("PRAGMA foreign_keys = ON;")
+            cursor = conn.cursor()
+
+            # 1. Insert episode summary row into `runs`
+            cursor.execute(
+                """
+                INSERT INTO runs (
+                    created_at, seed, sqc_method, m_no, span, actual_span,
+                    e_utliz, actual_utliz, due_tightness, pt_min, pt_max, pt_cv,
+                    machine_bkd, mtbf, random_mtbf, mttr, random_mttr,
+                    total_jobs, completed_jobs,
+                    sqc_cnt_opt, sqc_cnt_si, sqc_cnt_reactive, sqc_cnt_passive,
+                    wall_time_s, opt_time_s,
+                    mean_tardiness, max_tardiness, mean_flowtime, max_flowtime
+                ) VALUES (
+                    :created_at, :seed, :sqc_method, :m_no, :span, :actual_span,
+                    :e_utliz, :actual_utliz, :due_tightness, :pt_min, :pt_max, :pt_cv,
+                    :machine_bkd, :mtbf, :random_mtbf, :mttr, :random_mttr,
+                    :total_jobs, :completed_jobs,
+                    :sqc_cnt_opt, :sqc_cnt_si, :sqc_cnt_reactive, :sqc_cnt_passive,
+                    :wall_time_s, :opt_time_s,
+                    :mean_tardiness, :max_tardiness, :mean_flowtime, :max_flowtime
+                )
+                """,
+                run_record,
+            )
+            run_id = int(cursor.lastrowid)
+
+            # 2. Batch-insert jobs into `jobs`
+            if jobs_records:
+                cursor.executemany(
+                    """
+                    INSERT INTO jobs (
+                        run_id, j_idx, creation_t, due_t, completion_t, status,
+                        tardiness, flowtime, trajectory_json, exp_pt_json, actual_pt_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    [(run_id, *row) for row in jobs_records],
+                )
+
+            # 3. Batch-insert operations into `operations`
+            if operations_records:
+                cursor.executemany(
+                    """
+                    INSERT INTO operations (
+                        run_id, j_idx, op_seq, m_idx, decision_type, queue_len_at_dec,
+                        arrival_t, begin_t, end_t, wait_t, expected_pt, actual_pt, scheduled_begin_t
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    [(run_id, *row) for row in operations_records],
+                )
+
+            # 4. Batch-insert machine breakdowns into `breakdowns`
+            if breakdowns_records:
+                cursor.executemany(
+                    """
+                    INSERT INTO breakdowns (
+                        run_id, m_idx, begin_t, end_t, expected_end_t, actual_duration, prod_delay
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    [(run_id, *row) for row in breakdowns_records],
+                )
+
+            # 5. Batch-insert centralized rescheduling snapshots into `schedule_cycles`
+            if schedule_cycles_records:
+                cursor.executemany(
+                    """
+                    INSERT INTO schedule_cycles (
+                        run_id, sim_t, trigger_type, num_jobs, num_ops,
+                        solver_status, solve_time_s, m_schedule_json, j_schedule_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    [(run_id, *row) for row in schedule_cycles_records],
+                )
+
+            # 6. Batch-insert chronological simulation events into `sim_events`
+            if sim_events_records:
+                cursor.executemany(
+                    """
+                    INSERT INTO sim_events (
+                        run_id, sim_t, level, event_type, m_idx, j_idx, message
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    [(run_id, *row) for row in sim_events_records],
+                )
+
+            conn.commit()
+            return run_id
 
 
 def draw_gantt_chart(logger: logging.Logger, recorder, **kwargs) -> None:

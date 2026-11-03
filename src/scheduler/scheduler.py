@@ -49,6 +49,7 @@ class CentralScheduler:
 
         # SimPy event triggered by Narrator whenever a new job arrives or a machine breaks down
         self.build_schedule_event = self.env.event()
+        self.last_trigger_type = "INITIAL"
 
         # Select the mathematical optimization backend solver
         if self.sqc_method == SequencingMethod.GurobiOptimizer:
@@ -59,6 +60,12 @@ class CentralScheduler:
         # Register the continuous schedule-building SimPy process
         self.env.process(self.solve_problem_process())
 
+    def trigger_reschedule(self, trigger_type: str) -> None:
+        """Trigger `build_schedule_event` and record the cause ('JOB_ARRIVAL' or 'MACHINE_BREAKDOWN')."""
+        self.last_trigger_type = trigger_type
+        if not self.build_schedule_event.triggered:
+            self.build_schedule_event.succeed()
+
     def solve_problem_process(self):
         """
         SimPy process that waits for `self.build_schedule_event`, extracts the remaining operations
@@ -67,6 +74,7 @@ class CentralScheduler:
         while True:
             yield self.build_schedule_event
             begin_t = time.time()
+            solver_status = "PASSIVE"
 
             # Case 1: 0 or 1 job currently in the system -> no inter-job contention exists
             if len(self.in_system_jobs) <= 1:
@@ -100,7 +108,7 @@ class CentralScheduler:
                     self.solve_without_optimization()
                 else:
                     # Call the optimization solver (Gurobi or OR-Tools) to resolve machine contention
-                    var_op_begin_t, over_extended_problem = self.scheduler.solve_scheduling_problem(
+                    var_op_begin_t, over_extended_problem, solver_status = self.scheduler.solve_scheduling_problem(
                         self.logger,
                         self.env,
                         self.m_list,
@@ -113,7 +121,35 @@ class CentralScheduler:
                     if over_extended_problem is not None:
                         self.ext_prob_log[int(self.env.now)] = over_extended_problem
 
-                self.recorder.opt_time_expense += time.time() - begin_t
+            cycle_expense = time.time() - begin_t
+            if solver_status != "PASSIVE":
+                self.recorder.opt_time_expense += cycle_expense
+
+            # Record this rescheduling snapshot for the `schedule_cycles` SQLite table
+            num_ops = sum(len(ops) for ops in self.schedule.values())
+            m_sch_serializable = {int(k): [int(x) for x in v] for k, v in self.schedule.items()}
+            j_sch_serializable = {
+                int(k): [[int(m_id), float(t)] for m_id, t in v]
+                for k, v in self.j_op_by_schedule.items()
+            }
+            self.recorder.schedule_cycles_list.append(
+                (
+                    round(float(self.env.now), 2),
+                    str(self.last_trigger_type),
+                    int(len(self.in_system_jobs)),
+                    int(num_ops),
+                    str(solver_status),
+                    round(float(cycle_expense), 5),
+                    json.dumps(m_sch_serializable),
+                    json.dumps(j_sch_serializable),
+                )
+            )
+            self.recorder.record_event(
+                self.env.now,
+                "DEBUG",
+                "RESCHEDULE",
+                message=f"trigger={self.last_trigger_type}, status={solver_status}, jobs={len(self.in_system_jobs)}, ops={num_ops}",
+            )
 
             # Reset `build_schedule_event` so future dynamic events can trigger the next rescheduling cycle
             self.build_schedule_event = self.env.event()
@@ -392,9 +428,10 @@ class ORTools:
         PART IV: Extract solution and convert scaled integers back to simulation time units
         """
         time_expense = round(time.time() - start_t, 3)
+        status_name = solver.StatusName(status)
         logger.debug(
             "OR_Tools CP Model solving process elapsed, model status: {}, time expense: {}s".format(
-                solver.StatusName(status), time_expense
+                status_name, time_expense
             )
         )
 
@@ -420,7 +457,7 @@ class ORTools:
         converted_var_op_begin_t = {
             key: round(solver.Value(op.begin) / scale, 1) for key, op in all_ops.items()
         }
-        return converted_var_op_begin_t, over_extended_problem
+        return converted_var_op_begin_t, over_extended_problem, status_name
 
 
 class GurobiOptimizer:
@@ -617,9 +654,10 @@ class GurobiOptimizer:
                 PART IV: Extract solution into standard Python dictionary
                 """
                 time_expense = round(time.time() - start_t, 3)
+                status_name = grb_msg.get(model.status, f"status_{model.status}").upper()
                 logger.debug(
                     "Optimization elapsed, model status: {}, time expense: {}s".format(
-                        grb_msg.get(model.status, f"status_{model.status}"), time_expense
+                        status_name, time_expense
                     )
                 )
                 converted_var_op_begin_t = {key: round(var.X, 1) for key, var in var_op_begin_t.items()}
@@ -633,4 +671,4 @@ class GurobiOptimizer:
         else:
             over_extended_problem = None
 
-        return converted_var_op_begin_t, over_extended_problem
+        return converted_var_op_begin_t, over_extended_problem, status_name

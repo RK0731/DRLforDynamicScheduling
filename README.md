@@ -79,10 +79,23 @@ python main.py -sqc CR -seed 42
 | `-rnd_mtbf` | `--random_MTBF` | `True` | Sample time between failures from an Exponential distribution |
 | `-mttr` | `--MTTR` | `10.0` | Mean Time To Repair (MTTR) |
 | `-rnd_mttr` | `--random_MTTR` | `False` | Sample repair time from Uniform `[0.5 * MTTR, 1.5 * MTTR]` |
+| `-db` | `--db_path` | `logs/simulation.db` | Path to persistent SQLite database storing all simulation runs |
 | `-draw` | `--draw_gantt` | `5` | Seconds to display interactive Gantt chart (`0` disables pop-up; disabled if `span >= 250`) |
 | `-save_gantt` | `--save_gantt` | `True` | Flag to disable saving `gantt_chart.png` to the run's log directory |
 | `-ns` | `--no_stream` | `False` | Suppress console (`INFO`) log output |
 | `-sqc` | `--sqc_method` | `GurobiOptimizer` | Scheduler/rule: `GurobiOptimizer`, `ORTools`, `FIFO`, `LIFO`, `Slack`, `CR`, `SPT`, `LWKR`, `DRL_scheduler` |
+
+### Logging & SQLite Database (`logs/simulation.db`)
+
+Every simulation episode automatically persists its full structured data into a single SQLite database (`logs/simulation.db`) across 6 relational tables:
+- `runs`: Episode configuration, parameters, and aggregate KPIs (mean/max tardiness, flowtime, utilization, wall/solver time)
+- `jobs`: Per-job creation time, due date, completion time, status, tardiness, flowtime, and routing/PT JSON arrays
+- `operations`: Per-operation execution records (`m_idx`, `decision_type`, `arrival_t`, `begin_t`, `end_t`, `wait_t`, `expected_pt`, `actual_pt`, `scheduled_begin_t`)
+- `breakdowns`: Machine breakdown intervals, expected repair times, and production delays
+- `schedule_cycles`: Centralized rescheduling snapshots, solver status, solve time, and machine/job schedules
+- `sim_events`: Chronological discrete-event trace (`JOB_CREATED`, `JOB_IN`, `OP_START`, `OP_OUT`, `JOB_END`, `IDL_ON`, `STR_IDL_ON`, `BKD_START`, `RESCHEDULE`, etc.)
+
+In addition, the 3 most recent timestamped text log folders (`logs/<timestamp>/sim.log` and `gantt_chart.png`) are retained for quick inspection.
 
 ### Example Simulation Output (Gantt Chart)
 
