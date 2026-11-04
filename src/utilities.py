@@ -140,15 +140,20 @@ def create_logger(log_dir: Path = Path('./log'), stream: bool = True, keep: int 
 class SimulationDatabase:
     """
     Persistent SQLite database manager for storing structured simulation episodes.
-    Maintains 6 relational tables:
+    Maintains 7 relational tables:
       1. `runs`            - Episode configuration parameters and aggregate KPIs
       2. `jobs`            - Per-job arrival, due date, trajectory, processing times, and tardiness/flowtime
       3. `operations`      - Per-operation execution details, waiting time, and scheduled vs. actual start time
-      4. `breakdowns`      - Machine breakdown intervals, expected repair times, and production delays
-      5. `schedule_cycles` - Centralized optimization rescheduling snapshots, solver status, and solve time
-      6. `sim_events`      - Chronological discrete-event trace across machines, jobs, and scheduler
-    All data for an episode is buffered in `Recorder` during `env.run()` and flushed in a single
-    atomic transaction at the end of the episode (`save_episode`) to avoid disk I/O overhead during simulation.
+      4. `decisions`       - Exact per-decision replay snapshot: queue order, candidate features, chosen position,
+                             baseline rule picks, and reserved DRL transition columns
+      5. `breakdowns`      - Machine breakdown intervals, expected repair times, and production delays
+      6. `schedule_cycles` - Centralized optimization rescheduling snapshots, solver status, and solve time
+      7. `sim_events`      - Chronological discrete-event trace across machines, jobs, and scheduler
+    All data for an episode is buffered in `Recorder` during `env.run()`. The dominant `sim_events`
+    table is streamed to disk in batches once its in-memory buffer exceeds a threshold, while the
+    smaller tables (`jobs`, `operations`, `breakdowns`, `schedule_cycles`) are flushed in a single
+    transaction at the end of the episode via `append_children`. The `runs` row is created upfront
+    (`create_run`) so streamed child rows can reference a valid foreign key.
     """
 
     SCHEMA_SQL = """
@@ -221,6 +226,26 @@ class SimulationDatabase:
         FOREIGN KEY (run_id, j_idx) REFERENCES jobs(run_id, j_idx) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS decisions (
+        decision_id      INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id           INTEGER NOT NULL,
+        sim_t            REAL    NOT NULL,
+        m_idx            INTEGER NOT NULL,
+        j_idx            INTEGER NOT NULL,
+        op_seq           INTEGER NOT NULL,
+        decision_type    TEXT    NOT NULL,
+        queue_len        INTEGER NOT NULL,
+        chosen_pos       INTEGER NOT NULL,
+        queue_json       TEXT    NOT NULL,
+        candidates_json  TEXT    NOT NULL,
+        state_json       TEXT,
+        action           INTEGER,
+        reward           REAL,
+        next_state_json  TEXT,
+        episode_done     INTEGER,
+        FOREIGN KEY (run_id) REFERENCES runs(run_id) ON DELETE CASCADE
+    );
+
     CREATE TABLE IF NOT EXISTS breakdowns (
         bkd_id           INTEGER PRIMARY KEY AUTOINCREMENT,
         run_id           INTEGER NOT NULL,
@@ -261,6 +286,8 @@ class SimulationDatabase:
 
     CREATE INDEX IF NOT EXISTS idx_runs_sqc_method       ON runs(sqc_method);
     CREATE INDEX IF NOT EXISTS idx_operations_run_m      ON operations(run_id, m_idx);
+    CREATE INDEX IF NOT EXISTS idx_decisions_run_time    ON decisions(run_id, sim_t);
+    CREATE INDEX IF NOT EXISTS idx_decisions_run_m       ON decisions(run_id, m_idx);
     CREATE INDEX IF NOT EXISTS idx_breakdowns_run_m      ON breakdowns(run_id, m_idx);
     CREATE INDEX IF NOT EXISTS idx_schedule_cycles_run   ON schedule_cycles(run_id, sim_t);
     CREATE INDEX IF NOT EXISTS idx_sim_events_run_time   ON sim_events(run_id, sim_t);
@@ -273,54 +300,86 @@ class SimulationDatabase:
         self._init_schema()
 
     def _init_schema(self) -> None:
-        """Create the 6 tables and indexes if they do not exist, and enable WAL mode for concurrency."""
+        """Create the 7 tables and indexes if they do not exist, and enable WAL mode for concurrency."""
         with sqlite3.connect(self.db_path, timeout=30.0) as conn:
             conn.execute("PRAGMA journal_mode = WAL;")
             conn.executescript(self.SCHEMA_SQL)
+            # Lightweight migration for databases created by earlier schema versions
+            self._drop_legacy_columns(conn)
 
-    def save_episode(
-        self,
-        run_record: dict,
-        jobs_records: list,
-        operations_records: list,
-        breakdowns_records: list,
-        schedule_cycles_records: list,
-        sim_events_records: list,
-    ) -> int:
+    @staticmethod
+    def _drop_legacy_columns(conn: sqlite3.Connection) -> None:
+        """Drop obsolete columns from pre-existing tables so old DBs converge to the current schema."""
+        legacy_columns = {"decisions": ["rule_picks_json"]}
+        for table, columns in legacy_columns.items():
+            existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+            for column in columns:
+                if column in existing:
+                    conn.execute(f"ALTER TABLE {table} DROP COLUMN {column}")
+
+    def create_run(self, run_record: dict) -> int:
         """
-        Flush an entire simulation episode into the SQLite database in a single transaction.
-        Returns the newly generated `run_id`.
+        Insert a `runs` row with the episode's configuration upfront and return its `run_id`.
+        This enables streaming child rows (e.g., `sim_events`) against a valid foreign key
+        before the episode's summary KPIs are known at the end of the simulation.
         """
         with sqlite3.connect(self.db_path, timeout=30.0) as conn:
             conn.execute("PRAGMA foreign_keys = ON;")
             cursor = conn.cursor()
-
-            # 1. Insert episode summary row into `runs`
             cursor.execute(
                 """
                 INSERT INTO runs (
-                    created_at, seed, sqc_method, m_no, span, actual_span,
-                    e_utliz, actual_utliz, due_tightness, pt_min, pt_max, pt_cv,
-                    machine_bkd, mtbf, random_mtbf, mttr, random_mttr,
-                    total_jobs, completed_jobs,
-                    sqc_cnt_opt, sqc_cnt_si, sqc_cnt_reactive, sqc_cnt_passive,
-                    wall_time_s, opt_time_s,
-                    mean_tardiness, max_tardiness, mean_flowtime, max_flowtime
+                    created_at, seed, sqc_method, m_no, span,
+                    e_utliz, due_tightness, pt_min, pt_max, pt_cv,
+                    machine_bkd, mtbf, random_mtbf, mttr, random_mttr
                 ) VALUES (
-                    :created_at, :seed, :sqc_method, :m_no, :span, :actual_span,
-                    :e_utliz, :actual_utliz, :due_tightness, :pt_min, :pt_max, :pt_cv,
-                    :machine_bkd, :mtbf, :random_mtbf, :mttr, :random_mttr,
-                    :total_jobs, :completed_jobs,
-                    :sqc_cnt_opt, :sqc_cnt_si, :sqc_cnt_reactive, :sqc_cnt_passive,
-                    :wall_time_s, :opt_time_s,
-                    :mean_tardiness, :max_tardiness, :mean_flowtime, :max_flowtime
+                    :created_at, :seed, :sqc_method, :m_no, :span,
+                    :e_utliz, :due_tightness, :pt_min, :pt_max, :pt_cv,
+                    :machine_bkd, :mtbf, :random_mtbf, :mttr, :random_mttr
                 )
                 """,
                 run_record,
             )
             run_id = int(cursor.lastrowid)
+            conn.commit()
+            return run_id
 
-            # 2. Batch-insert jobs into `jobs`
+    def append_events(self, run_id: int, events: list) -> None:
+        """Batch-insert chronological simulation events into `sim_events` in a single transaction."""
+        if not events:
+            return
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            conn.execute("PRAGMA foreign_keys = ON;")
+            cursor = conn.cursor()
+            cursor.executemany(
+                """
+                INSERT INTO sim_events (
+                    run_id, sim_t, level, event_type, m_idx, j_idx, message
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                [(run_id, *row) for row in events],
+            )
+            conn.commit()
+
+    def append_children(
+        self,
+        run_id: int,
+        jobs_records: list,
+        operations_records: list,
+        breakdowns_records: list,
+        schedule_cycles_records: list,
+        decisions_records: list = None,
+    ) -> None:
+        """
+        Batch-insert the smaller per-episode child tables (`jobs`, `operations`, `decisions`,
+        `breakdowns`, `schedule_cycles`) in a single transaction at the end of the simulation.
+        """
+        decisions_records = decisions_records or []
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            conn.execute("PRAGMA foreign_keys = ON;")
+            cursor = conn.cursor()
+
+            # 1. Batch-insert jobs into `jobs`
             if jobs_records:
                 cursor.executemany(
                     """
@@ -332,7 +391,7 @@ class SimulationDatabase:
                     [(run_id, *row) for row in jobs_records],
                 )
 
-            # 3. Batch-insert operations into `operations`
+            # 2. Batch-insert operations into `operations`
             if operations_records:
                 cursor.executemany(
                     """
@@ -342,6 +401,19 @@ class SimulationDatabase:
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     [(run_id, *row) for row in operations_records],
+                )
+
+            # 3. Batch-insert exact decision-replay snapshots into `decisions`
+            if decisions_records:
+                cursor.executemany(
+                    """
+                    INSERT INTO decisions (
+                        run_id, sim_t, m_idx, j_idx, op_seq, decision_type, queue_len,
+                        chosen_pos, queue_json, candidates_json,
+                        state_json, action, reward, next_state_json, episode_done
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    [(run_id, *row) for row in decisions_records],
                 )
 
             # 4. Batch-insert machine breakdowns into `breakdowns`
@@ -367,19 +439,34 @@ class SimulationDatabase:
                     [(run_id, *row) for row in schedule_cycles_records],
                 )
 
-            # 6. Batch-insert chronological simulation events into `sim_events`
-            if sim_events_records:
-                cursor.executemany(
-                    """
-                    INSERT INTO sim_events (
-                        run_id, sim_t, level, event_type, m_idx, j_idx, message
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    [(run_id, *row) for row in sim_events_records],
-                )
-
             conn.commit()
-            return run_id
+
+    def finalize_run(self, run_id: int, kpi_record: dict) -> None:
+        """Update the `runs` row with final summary KPIs computed at the end of the episode."""
+        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+            conn.execute("PRAGMA foreign_keys = ON;")
+            conn.execute(
+                """
+                UPDATE runs SET
+                    actual_span      = :actual_span,
+                    actual_utliz     = :actual_utliz,
+                    total_jobs       = :total_jobs,
+                    completed_jobs   = :completed_jobs,
+                    sqc_cnt_opt      = :sqc_cnt_opt,
+                    sqc_cnt_si       = :sqc_cnt_si,
+                    sqc_cnt_reactive = :sqc_cnt_reactive,
+                    sqc_cnt_passive  = :sqc_cnt_passive,
+                    wall_time_s      = :wall_time_s,
+                    opt_time_s       = :opt_time_s,
+                    mean_tardiness   = :mean_tardiness,
+                    max_tardiness    = :max_tardiness,
+                    mean_flowtime    = :mean_flowtime,
+                    max_flowtime     = :max_flowtime
+                WHERE run_id = :run_id
+                """,
+                {**kpi_record, "run_id": run_id},
+            )
+            conn.commit()
 
 
 def draw_gantt_chart(logger: logging.Logger, recorder, **kwargs) -> None:

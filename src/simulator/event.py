@@ -5,7 +5,6 @@ simulation metrics (`Narrator` and `Recorder`).
 """
 
 # standard imports
-from datetime import datetime as dt
 import json
 from logging import Logger
 import time
@@ -19,7 +18,7 @@ from tabulate import tabulate
 from .job import Job
 from .machine import Machine
 from ..scheduler.sequencing_rule import SequencingMethod
-from ..scheduler.scheduler import CentralScheduler
+from ..scheduler.scheduler import CentralScheduler, is_optimization_scheduler
 from ..utilities import SimulationDatabase
 
 
@@ -85,7 +84,7 @@ class Narrator:
         if 'sqc_method' in kwargs:
             if kwargs['sqc_method'] == 'complete_schedule':  # placeholder for following a pre-computed static schedule
                 job_sequencing_func = SequencingMethod.FIFO
-            elif kwargs['sqc_method'] in (SequencingMethod.GurobiOptimizer, SequencingMethod.ORTools):
+            elif is_optimization_scheduler(kwargs['sqc_method']):
                 # Mathematical optimization mode: create a CentralScheduler to dynamically compute global schedules
                 self.central_scheduler = CentralScheduler(**self.kwargs)
                 self.opt_mode = True
@@ -382,25 +381,10 @@ class Narrator:
                 )
             )
 
-        # 6. Flush the entire episode's structured records to the persistent SQLite database
-        run_record = {
-            "created_at": dt.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "seed": int(self.seed),
-            "sqc_method": str(sqc_name),
-            "m_no": int(self.m_no),
-            "span": float(self.span),
+        # 6. Finalize the episode: flush remaining buffered records and update the `runs` row KPIs
+        kpi_record = {
             "actual_span": round(float(self.recorder.last_job_comp_T), 2),
-            "e_utliz": float(self.E_utliz),
             "actual_utliz": float(actual_utliz),
-            "due_tightness": float(self.due_tightness),
-            "pt_min": float(self.pt_range[0]),
-            "pt_max": float(self.pt_range[1]),
-            "pt_cv": float(self.pt_cv),
-            "machine_bkd": int(bool(self.machine_breakdown)),
-            "mtbf": float(self.MTBF) if self.machine_breakdown else None,
-            "random_mtbf": int(bool(self.random_MTBF)) if self.machine_breakdown else None,
-            "mttr": float(self.MTTR) if self.machine_breakdown else None,
-            "random_mttr": int(bool(self.random_MTTR)) if self.machine_breakdown else None,
             "total_jobs": int(self.j_idx),
             "completed_jobs": int(len(self.recorder.j_operation_dict)),
             "sqc_cnt_opt": int(self.recorder.sqc_cnt_opt),
@@ -414,7 +398,7 @@ class Narrator:
             "mean_flowtime": mean_flow,
             "max_flowtime": max_flow,
         }
-        run_id = self.recorder.flush_to_database(run_record, db_path=self.kwargs.get('db_path'))
+        run_id = self.recorder.finalize_episode(kpi_record)
         self.logger.info(f"Episode records persisted to SQLite database (run_id={run_id})")
 
     def build_sqc_experience_repository(self, m_list: List[Machine]) -> None:
@@ -437,9 +421,17 @@ class Narrator:
 class Recorder:
     """
     Shared in-memory data container that tracks active jobs, completed operations, breakdowns,
-    rescheduling cycles, chronological events, and KPIs during a simulation episode,
-    then flushes all records to the persistent SQLite database in a single batch transaction.
+    rescheduling cycles, chronological events, and KPIs during a simulation episode.
+
+    Persistence strategy (bounded memory):
+      - `sim_events` (the dominant table) is streamed to SQLite in batches once its in-memory
+        buffer exceeds `FLUSH_EVENTS_THRESHOLD`, keeping RAM usage bounded for long simulation spans.
+      - `jobs`, `operations`, `breakdowns`, and `schedule_cycles` are buffered in memory for the
+        whole episode and flushed once at the end (they are much smaller per row than `sim_events`).
     """
+
+    # Maximum number of buffered `sim_events` rows before an incremental flush to SQLite is triggered
+    FLUSH_EVENTS_THRESHOLD = 10_000
 
     def __init__(self, **kwargs):
         for k, v in kwargs.items():
@@ -465,9 +457,23 @@ class Recorder:
 
         # Structured buffers for SQLite batch persistence
         self.operations_list: list = []
+        self.decisions_list: list = []
         self.breakdowns_list: list = []
         self.schedule_cycles_list: list = []
         self.sim_events_list: list = []
+
+        # Database persistence state (initialized by `start_run` before the simulation begins)
+        self.db: Optional[SimulationDatabase] = None
+        self.run_id: Optional[int] = None
+
+    def start_run(self, run_record: dict, db_path=None) -> int:
+        """
+        Instantiate the persistent `SimulationDatabase`, create the `runs` row upfront, and return
+        the assigned `run_id`. Must be called once before the SimPy environment begins executing.
+        """
+        self.db = SimulationDatabase(db_path=db_path)
+        self.run_id = int(self.db.create_run(run_record))
+        return self.run_id
 
     def record_event(
         self,
@@ -478,7 +484,10 @@ class Recorder:
         j_idx: Optional[int] = None,
         message: str = "",
     ) -> None:
-        """Append a structured simulation event to the in-memory buffer for the `sim_events` table."""
+        """
+        Append a structured simulation event to the in-memory buffer for the `sim_events` table.
+        When the buffer exceeds `FLUSH_EVENTS_THRESHOLD`, flush it incrementally to SQLite.
+        """
         self.sim_events_list.append(
             (
                 round(float(sim_t), 2),
@@ -487,6 +496,59 @@ class Recorder:
                 int(m_idx) if m_idx is not None else None,
                 int(j_idx) if j_idx is not None else None,
                 str(message),
+            )
+        )
+        if len(self.sim_events_list) >= self.FLUSH_EVENTS_THRESHOLD:
+            self._flush_events()
+
+    def _flush_events(self) -> None:
+        """Stream the buffered `sim_events` rows to SQLite and clear the in-memory buffer."""
+        if not self.sim_events_list:
+            return
+        if self.db is None or self.run_id is None:
+            # No run created yet (e.g., early event before `start_run`); defer to final flush
+            return
+        self.db.append_events(self.run_id, self.sim_events_list)
+        self.sim_events_list.clear()
+
+    def record_decision(
+        self,
+        sim_t: float,
+        m_idx: int,
+        j_idx: int,
+        op_seq: int,
+        decision_type: str,
+        queue_job_indices: list,
+        chosen_pos: int,
+        candidates: dict,
+    ) -> None:
+        """
+        Append an exact decision-replay snapshot to the in-memory buffer for the `decisions` table.
+
+        Parameters
+        ----------
+        queue_job_indices : ordered `j_idx` list exactly as seen by the machine at decision time
+                            (this is the authoritative queue snapshot for replay).
+        chosen_pos        : index of the chosen job inside `queue_job_indices`.
+        candidates        : mapping `{str(j_idx): {feature: value}}` for every queued job.
+                            Queue order is authoritative in `queue_job_indices`.
+        """
+        self.decisions_list.append(
+            (
+                round(float(sim_t), 2),
+                int(m_idx),
+                int(j_idx),
+                int(op_seq),
+                str(decision_type),
+                int(len(queue_job_indices)),
+                int(chosen_pos),
+                json.dumps([int(x) for x in queue_job_indices]),
+                json.dumps(candidates),
+                None,  # state_json      (reserved for DRL s_t)
+                None,  # action          (reserved for DRL a_t)
+                None,  # reward          (reserved for DRL r_t)
+                None,  # next_state_json (reserved for DRL s_{t+1})
+                None,  # episode_done    (reserved for DRL terminal flag)
             )
         )
 
@@ -517,11 +579,21 @@ class Recorder:
                 bkd[5] = round(float(prod_delay), 2)
                 break
 
-    def flush_to_database(self, run_record: dict, db_path=None) -> int:
+    def finalize_episode(self, kpi_record: dict) -> int:
         """
-        Convert in-memory job, operation, breakdown, schedule_cycle, and sim_event buffers
-        into relational tuples and save them to the persistent SQLite database.
+        Flush any remaining buffered data to SQLite at the end of the simulation:
+          1. stream remaining `sim_events` (incremental flush),
+          2. batch-insert `jobs`, `operations`, `decisions`, `breakdowns`, and `schedule_cycles`,
+          3. update the `runs` row with final summary KPIs.
+        Returns the episode's `run_id`.
         """
+        if self.db is None or self.run_id is None:
+            raise RuntimeError("Recorder.start_run() must be called before finalize_episode()")
+
+        # 1. Flush any remaining buffered sim_events
+        self._flush_events()
+
+        # 2. Build and flush the smaller child tables
         jobs_records = []
         for j_idx in sorted(self.all_jobs_dict.keys()):
             job = self.all_jobs_dict[j_idx]
@@ -541,14 +613,16 @@ class Recorder:
                     json.dumps(job.initial_actual_pt),
                 )
             )
-
-        db = SimulationDatabase(db_path=db_path)
-        return db.save_episode(
-            run_record=run_record,
+        self.db.append_children(
+            run_id=self.run_id,
             jobs_records=jobs_records,
             operations_records=self.operations_list,
             breakdowns_records=[tuple(b) for b in self.breakdowns_list],
             schedule_cycles_records=self.schedule_cycles_list,
-            sim_events_records=self.sim_events_list,
+            decisions_records=self.decisions_list,
         )
+
+        # 3. Finalize the `runs` row with summary KPIs
+        self.db.finalize_run(self.run_id, kpi_record)
+        return int(self.run_id)
 

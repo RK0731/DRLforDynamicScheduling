@@ -1,5 +1,7 @@
 # Project & Architecture Guide for AI Agents (`AGENTS.md`)
 
+> **See also:** [`WORKNOTE.md`](WORKNOTE.md) — chronological handoff log of the latest completed work, verification results, and the prioritized list of changes not yet implemented. Check it before starting new work.
+
 ## 1. Nature of the Research Project
 
 - **Project Title**: *Multi-agent Imitational, Chronological, and Asynchronous Reinforcement Learning Framework for Production Scheduling* (`DRLforDynamicScheduling`)
@@ -34,7 +36,7 @@ In a job shop with $M$ machines (`m_no`), jobs arrive dynamically over time rath
 - `main.py`: CLI parser that maps user flags into `Simulator.run(**kwargs)`.
 - `src/utilities.py`:
   - `setup_logger(stream, keep=3)`: Creates a timestamped directory under `logs/<YYYYMMDD-HHMMSSffffff>/sim.log`, prunes older log folders beyond `keep=3` (retaining only the 3 most recent text log folders while preserving `logs/simulation.db`), logs `DEBUG` details to `sim.log`, and streams `INFO` summaries to console.
-  - `SimulationDatabase(db_path)`: Manages the persistent SQLite database (`logs/simulation.db` by default) containing 6 relational tables (`runs`, `jobs`, `operations`, `breakdowns`, `schedule_cycles`, `sim_events`) with WAL mode and foreign key constraints. Flushes an entire episode atomically via `save_episode(...)` at the end of the simulation.
+  - `SimulationDatabase(db_path)`: Manages the persistent SQLite database (`logs/simulation.db` by default) containing 7 relational tables (`runs`, `jobs`, `operations`, `decisions`, `breakdowns`, `schedule_cycles`, `sim_events`) with WAL mode and foreign key constraints. Uses a streaming persistence strategy: `create_run` inserts the `runs` row upfront, `append_events` streams `sim_events` in batches (triggered by `Recorder.FLUSH_EVENTS_THRESHOLD`), `append_children` flushes the smaller tables once at the end, and `finalize_run` updates the `runs` row with final KPIs. The `decisions` table stores the authoritative per-decision replay snapshot (`queue_json`, `chosen_pos`, `candidates_json` keyed by `j_idx`) plus reserved DRL columns.
   - `draw_gantt_chart(logger, recorder, **kwargs)`: Plots each job's operations (`recorder.j_operation_dict`) as color-coded horizontal bars and overlays machine breakdowns (`recorder.m_bkd_dict`) as hatched white bars, saving `gantt_chart.png` inside the active log folder.
 
 ### 2.2 Discrete-Event Simulator (`src/simulator/`)
@@ -47,7 +49,7 @@ Built on **SimPy** (`simpy.Environment`):
     - Spawns `process_job_creation()`: Generates jobs at pre-sampled exponential intervals, registers them in `recorder.in_system_jobs`, triggers `central_scheduler.build_schedule_event` (if in optimization mode), and routes each job to its first machine.
     - Spawns `process_machine_breakdown(m, random_MTBF, random_MTTR)` for each machine: Waits for `MTBF`, waits for any in-progress operation on `m` to complete, sets `m.working_event = env.event()` and `m.status = "down"`, triggers `central_scheduler.build_schedule_event`, waits for the repair duration `bkd_t`, records `[actual_begin, actual_end]` in `recorder.m_bkd_dict[m.m_idx]`, and triggers `m.working_event.succeed()`.
     - `post_simulation()`: Verifies all jobs completed, checks for schedule-execution start-time mismatches (when `pt_cv == 0` and `random_MTTR == False`), and prints tabulated configuration and KPI summaries.
-  - `Recorder`: Central state & statistics store shared across all entities (`in_system_jobs`, `j_operation_dict`, `j_tardiness_dict`, `j_flowtime_dict`, `m_bkd_dict`, decision counters `sqc_cnt_opt`, `sqc_cnt_SI`, `sqc_cnt_reactive`, `sqc_cnt_passive`).
+  - `Recorder`: Central state & statistics store shared across all entities (`in_system_jobs`, `j_operation_dict`, `j_tardiness_dict`, `j_flowtime_dict`, `m_bkd_dict`, decision counters `sqc_cnt_opt`, `sqc_cnt_SI`, `sqc_cnt_reactive`, `sqc_cnt_passive`). Buffers structured rows for `operations`, `decisions`, `breakdowns`, `schedule_cycles`, and `sim_events`; `record_decision(...)` captures the exact pre-decision queue and candidate features.
 - `src/simulator/job.py`:
   - `Job`: Dataclass holding `j_idx`, `trajectory`, `pt_by_m_idx`, `remaining_machines`, `remaining_pt` (nominal), `actual_remaining_pt` (actual), `due`, `status` (`"queuing"`, `"processing"`, `"completed"`), `available_T` (expected completion time of current operation), and `operation_record`.
   - Lifecycle hooks:
@@ -97,6 +99,15 @@ Built on **SimPy** (`simpy.Environment`):
       2. Upon operation completion, `Machine.complete_experience()` observes $s_{t+1}$ and reward $r_t$, completes the tuple `[s_t, a_t, s_{t+1}, r_t]`, and appends it to `rep_memo[m_idx]`.
     - **Training (`train_Double_DQN`)**: Periodically aggregates experiences from all machines into a shared replay buffer, samples minibatches, computes DDQN targets using `action_NN` for action selection and `target_NN` for value evaluation, and updates `action_NN` with Smooth L1 (Huber) loss.
 
+### 2.5 Offline Analysis & State Reconstruction (`src/analysis/`)
+- `src/analysis/state_reconstruction.py`:
+  - `ShopfloorStateReconstructor(db_path, run_id)`: Loads one run's `jobs`, `operations`, `breakdowns`, `decisions`, `schedule_cycles`, and relevant `sim_events` into memory, then replays the timeline to rebuild the **complete shopfloor condition at any time** without re-running SimPy.
+  - `snapshot(t, tie="post")`: Pure-timeline reconstruction. Returns per-machine `status`, `current_job`, ordered waiting `queue` (candidate features), `breakdown`, `next_job_in_schedule`, `release_T`/`hidden_release_T`; per-in-system-job remaining route/work and accrued KPIs; plus `summary` and any `decisions` at `t`. `tie="post"` (default) treats a job starting exactly at `t` as processing; `tie="pre"` treats it as still queued.
+  - `snapshot_at_decision(decision_id)` / `iter_snapshots()`: Exact pre-decision states. The deciding machine's queue is taken from the authoritative `decisions.queue_json`; every other machine is reconstructed from the timeline. Operations starting at the same timestamp `t` are classified by decision order (`decision_id`) — a machine whose decision preceded this one is already processing, one whose decision follows is still queuing — which resolves the same-timestamp ambiguity a pure time query cannot.
+  - `reconstruct_state(...)`: One-shot convenience wrapper.
+  - CLI: `python -m src.analysis --run_id 1 --time 77.0` / `--decision_id 42`.
+  - Queue arrival order is recovered exactly from `sim_events.JOB_IN.event_id` (monotonic insertion order). Expected vs. actual values are both exposed.
+
 ---
 
 ## 3. Key Invariants to Preserve When Modifying the Code
@@ -110,3 +121,10 @@ Built on **SimPy** (`simpy.Environment`):
    - Upon operation completion (`after_operation`) or breakdown repair (`process_machine_breakdown`), both `release_T` and `hidden_release_T` (and `Job.available_T`) must be synchronized to `env.now` so early completions under stochastic settings do not leave stale future timestamps.
 3. **Sub-unit Time Precision in Solvers**:
    - The simulator operates at `0.1` time-unit resolution when `random_MTBF`, `random_MTTR`, or `processing_time_variability` is active. Any integer-only solver (such as OR-Tools CP-SAT) must scale time values by `10` rather than truncating floats with `int()`.
+4. **Decision Snapshot Timing (`decisions` table)**:
+   - The exact queue snapshot (`queue_json`, `candidates_json`, `chosen_pos`) must be captured inside `Machine.after_decision()` **before** `Job.after_decision()` and before any later queue mutation (`after_operation` pops the chosen job). `self.queue` is in arrival order and still contains the chosen job at that point, so `queue_json[chosen_pos] == j_idx` must always hold.
+5. **Offline Reconstruction Precedence (`src/analysis/`)**:
+   - At a recorded decision time, the deciding machine's queue must come from the authoritative `decisions.queue_json`, not from re-deriving it from `operations`. Same-timestamp arrivals make timeline-only reconstruction ambiguous.
+   - Simultaneous (same-timestamp) decisions must be ordered by `decision_id`: a job starting exactly at `t` is "processing" iff its own decision id precedes the decision being reconstructed (`snapshot_at_decision`); a pure `snapshot(t)` uses `tie` instead.
+   - Queue arrival order for other machines is recovered from `sim_events.JOB_IN.event_id` (insertion order), falling back to `(arrival_t, j_idx)`. Do not reorder by `j_idx` alone.
+   - Expected (`release_T`, `remaining_expected_pt`, `breakdown.expected_remaining`) and actual (`hidden_release_T`, `remaining_actual_pt`, `breakdown.actual_remaining`) values must remain distinct in reconstructed states, mirroring invariant 2.
