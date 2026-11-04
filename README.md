@@ -22,6 +22,7 @@ The project tackles the **Dynamic Job Shop Scheduling Problem (DJSSP)** under re
 ```text
 .
 ├── AGENTS.md                       # Architectural & domain guide for AI agents and developers
+├── WORKNOTE.md                     # Handoff log: latest work done + changes not yet implemented
 ├── doc/                            # Documentation, figures, and research proposals
 ├── logs/                           # Timestamped simulation logs and generated Gantt charts
 ├── math_modeling/                  # Mathematical optimization formulation (JSP_model.md)
@@ -41,7 +42,10 @@ The project tackles the **Dynamic Job Shop Scheduling Problem (DJSSP)** under re
 │   │   ├── machine.py              # Machine entity, queue management, and strategic idleness
 │   │   ├── job.py                  # Job entity, routing trajectory, and operation records
 │   │   └── exc.py                  # Custom simulator exception classes
-│   └── utilities.py                # Logger configuration and Gantt chart plotting
+│   ├── analysis/                   # Offline replay / state reconstruction from the SQLite trace
+│   │   ├── state_reconstruction.py # ShopfloorStateReconstructor (full per-machine state at any time)
+│   │   └── __main__.py             # CLI: python -m src.analysis --run_id 1 --time 77.0
+│   └── utilities.py                # Logger configuration, SQLite persistence, and Gantt chart plotting
 ├── main.py                         # Main CLI entry point to run simulations
 ├── README.md                       # Project documentation
 └── requirements.txt                # Python package dependencies
@@ -87,13 +91,70 @@ python main.py -sqc CR -seed 42
 
 ### Logging & SQLite Database (`logs/simulation.db`)
 
-Every simulation episode automatically persists its full structured data into a single SQLite database (`logs/simulation.db`) across 6 relational tables:
+Every simulation episode automatically persists its full structured data into a single SQLite database (`logs/simulation.db`) across 7 relational tables:
 - `runs`: Episode configuration, parameters, and aggregate KPIs (mean/max tardiness, flowtime, utilization, wall/solver time)
 - `jobs`: Per-job creation time, due date, completion time, status, tardiness, flowtime, and routing/PT JSON arrays
 - `operations`: Per-operation execution records (`m_idx`, `decision_type`, `arrival_t`, `begin_t`, `end_t`, `wait_t`, `expected_pt`, `actual_pt`, `scheduled_begin_t`)
+- `decisions`: Exact decision-replay snapshot — the authoritative queue at decision time (`queue_json`), the chosen position (`chosen_pos`), per-candidate features keyed by job index (`candidates_json`), plus reserved DRL columns (`state_json`, `action`, `reward`, `next_state_json`, `episode_done`)
 - `breakdowns`: Machine breakdown intervals, expected repair times, and production delays
 - `schedule_cycles`: Centralized rescheduling snapshots, solver status, solve time, and machine/job schedules
 - `sim_events`: Chronological discrete-event trace (`JOB_CREATED`, `JOB_IN`, `OP_START`, `OP_OUT`, `JOB_END`, `IDL_ON`, `STR_IDL_ON`, `BKD_START`, `RESCHEDULE`, etc.)
+
+To keep memory usage bounded during long simulation runs, the dominant `sim_events` table is streamed to disk in batches of 10,000 rows (`Recorder.FLUSH_EVENTS_THRESHOLD`), while the smaller tables are flushed once at the end of each episode.
+
+### Reproducing a Sequencing Decision
+
+Every `decisions` row is a complete, unambiguous snapshot of one decision. To rebuild the scenario:
+
+```sql
+SELECT sim_t, m_idx, decision_type, queue_json, chosen_pos, candidates_json
+FROM decisions
+WHERE run_id = :run_id
+ORDER BY sim_t;
+```
+
+- `queue_json` is the ordered list of `j_idx` exactly as the machine saw it (`[job_index1, job_index2, ...]`).
+- `chosen_pos` indexes into `queue_json`; the chosen job is `queue_json[chosen_pos]` (= `j_idx`).
+- `candidates_json` is an object keyed by `j_idx` (string), e.g. `{"10": {"arrival_t": ..., "wait_t": ..., "due_t": ..., "ttd": ..., "slack": ..., "current_pt": ..., "remaining_work": ..., "num_remaining_ops": ..., "critical_ratio": ...}}`. Queue order is authoritative in `queue_json`; rule scores/picks can be derived on demand from these features.
+
+### Reconstructing the Full Shopfloor State (Offline)
+
+For offline RL training, imitation learning, or counterfactual analysis, `src/analysis/state_reconstruction.py` replays the recorded trace and returns the **complete shopfloor condition at any time** — every machine's status, current job, ordered waiting queue, breakdown interval, and next scheduled job, plus every in-system job's remaining route/work.
+
+```python
+from src.analysis import ShopfloorStateReconstructor
+
+recon = ShopfloorStateReconstructor(run_id=1)          # defaults to logs/simulation.db and the latest run
+
+state = recon.snapshot(t=77.0)                         # arbitrary time
+state = recon.snapshot_at_decision(decision_id=42)     # exact pre-decision state
+for state in recon.iter_snapshots():                   # one state per recorded decision
+    ...
+```
+
+Or from the command line:
+
+```bash
+python -m src.analysis --run_id 1 --time 77.0
+python -m src.analysis --run_id 1 --decision_id 42
+```
+
+Each snapshot is a JSON-serializable dict:
+
+- `machines`: per machine `status` (`idle`, `processing`, `strategic_idle`, `down`), `current_job`, ordered `queue` (arrival order, with candidate features), `breakdown` (expected vs. actual remaining repair), `next_job_in_schedule`, and `release_T` / `hidden_release_T`.
+- `jobs`: every in-system job's `status`, `current_machine`, `op_seq`, `due_t`, `wait_t`, `completed_ops`, `remaining_machines`, `remaining_expected_pt`, `remaining_actual_pt`, `tardiness_so_far`, and `flowtime_so_far`.
+- `summary`: aggregate counts (jobs in system, processing machines, machines down, waiting jobs, completed/created jobs).
+- `decisions`: the recorded decision(s) at exactly `t`; `snapshot_at_decision` also sets `target_decision`.
+
+At a recorded decision time, the deciding machine's queue is taken verbatim from `decisions.queue_json` (authoritative), while all other machines are reconstructed from `operations`, `breakdowns`, `schedule_cycles`, and `sim_events`.
+
+Two entry points cover the two cases:
+
+- `snapshot(t, tie="post")` is a **pure timeline** reconstruction at continuous time `t`. `tie="post"` (the default) treats a job starting exactly at `t` as already processing; `tie="pre"` treats it as still queued.
+- `snapshot_at_decision(decision_id)` (and `iter_snapshots()`) reproduce the **exact pre-decision** state. Because several machines can make a decision at the same timestamp, operations that start at exactly `t` are classified by decision order (`decision_id`): a machine whose decision preceded this one is already processing, while one whose decision follows it is still queuing. This resolves the same-timestamp ambiguity that a pure time query cannot.
+
+> **Expected vs. actual:** as in the simulator, `release_T`, `remaining_expected_pt`, and `breakdown.expected_remaining` are what a scheduler observes; `hidden_release_T`, `remaining_actual_pt`, and `breakdown.actual_remaining` are the simulator's ground truth under stochastic processing times/repairs.
+
 
 In addition, the 3 most recent timestamped text log folders (`logs/<timestamp>/sim.log` and `gantt_chart.png`) are retained for quick inspection.
 

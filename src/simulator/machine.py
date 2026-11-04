@@ -346,6 +346,30 @@ class Machine:
                     scheduled_begin_t = float(exp_begin)
                     break
 
+        # Snapshot the exact queue and per-candidate features BEFORE any queue mutation.
+        # This is the authoritative record for decision replay and post-hoc analysis.
+        queue_job_indices = [j.j_idx for j in self.queue]
+        candidates = self._snapshot_candidates()
+        # Normalize the selected position to a non-negative index. Built-in rules return a
+        # real index, but this guards any custom rule that uses Python-style negative indexing.
+        # Must also overwrite `self.sqc_decision_pos` so `after_operation` pops by a stable
+        # index: `queue.pop(-1)` would otherwise pop whatever happens to be last *after* new
+        # arrivals append during processing, routing the wrong job to the next machine.
+        chosen_pos = self.sqc_decision_pos if self.sqc_decision_pos is not None else 0
+        if chosen_pos < 0:
+            chosen_pos += len(queue_job_indices)
+        self.sqc_decision_pos = chosen_pos
+        self.recorder.record_decision(
+            sim_t=self.env.now,
+            m_idx=self.m_idx,
+            j_idx=self.picked_j_instance.j_idx,
+            op_seq=len(self.picked_j_instance.operation_record),
+            decision_type=decision_type,
+            queue_job_indices=queue_job_indices,
+            chosen_pos=chosen_pos,
+            candidates=candidates,
+        )
+
         # Record this operation on the job instance and in the shared Recorder
         self.picked_j_instance.after_decision(
             self.m_idx,
@@ -362,6 +386,34 @@ class Machine:
         self.current_job = self.picked_j_instance.j_idx
         self.recorder.m_cum_runtime_dict[self.m_idx] = self.cumulative_runtime
         return actual_pt
+
+    def _snapshot_candidates(self) -> dict:
+        """
+        Build a feature snapshot of every job currently waiting in this machine's queue,
+        evaluated at the decision timestamp (before the chosen job is removed).
+
+        Returns a mapping `{str(j_idx): {feature: value}}`. The authoritative queue order
+        (and therefore the candidate ordering) is stored separately in `queue_json`.
+        These features are exactly the information available to a dispatching rule / agent,
+        so the snapshot can be used to reconstruct and replay the decision offline.
+        """
+        now = self.env.now
+        snapshot = {}
+        for job in self.queue:
+            remaining_work = float(sum(job.remaining_pt))  # total nominal work remaining
+            ttd = float(job.due - now)                      # time-to-due (used by Slack rule)
+            snapshot[str(int(job.j_idx))] = {
+                "arrival_t": round(float(job.arrival_T), 2),     # when it joined this queue
+                "wait_t": round(float(now - job.arrival_T), 2),  # waiting time so far
+                "due_t": round(float(job.due), 2),
+                "ttd": round(ttd, 2),
+                "slack": round(ttd - remaining_work, 2),
+                "current_pt": round(float(job.remaining_pt[0]), 2),  # PT on this machine
+                "remaining_work": round(remaining_work, 2),
+                "num_remaining_ops": int(len(job.remaining_operations)),
+                "critical_ratio": round(ttd / max(remaining_work, 1e-6), 4),
+            }
+        return snapshot
 
     def after_operation(self) -> None:
         """

@@ -14,7 +14,7 @@ import simpy
 # Project modules
 from .event import Narrator, Recorder
 from .machine import Machine
-from ..scheduler.sequencing_rule import SequencingMethod
+from ..scheduler.scheduler import is_optimization_scheduler
 from ..utilities import setup_logger, draw_gantt_chart
 
 
@@ -87,6 +87,9 @@ class Shopfloor:
         """Execute the SimPy environment, log post-simulation statistics, and generate the Gantt chart."""
         try:
             self.verify_simulation_setting()
+            # Create the persistent `runs` row upfront so child records (e.g., streamed `sim_events`)
+            # can reference a valid foreign key during the simulation
+            self.recorder.start_run(self._build_run_config(), db_path=self.kwargs.get('db_path'))
             start_t = time.time()
             self.logger.info("Simulation starts at: {}".format(time.strftime("%Y-%m-%d, %H:%M:%S")))
             # Run beyond nominal span (+1000 buffer) so all jobs created within `span` can finish processing
@@ -99,16 +102,39 @@ class Shopfloor:
         except Exception:
             self.logger.error(f"Simulation failed due to following exception:\n{traceback.format_exc()}")
 
+    def _build_run_config(self) -> dict:
+        """
+        Build the configuration-only record used to create the `runs` row upfront.
+        Final summary KPIs are written separately by `Recorder.finalize_episode`.
+        """
+        kwargs = self.kwargs
+        sqc_name = getattr(kwargs['sqc_method'], '__name__', str(kwargs['sqc_method']))
+        machine_bkd = bool(kwargs.get('machine_breakdown', True))
+        return {
+            "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "seed": int(self.narrator.seed),
+            "sqc_method": str(sqc_name),
+            "m_no": int(kwargs['m_no']),
+            "span": float(kwargs['span']),
+            "e_utliz": float(kwargs['E_utliz']),
+            "due_tightness": float(kwargs['due_tightness']),
+            "pt_min": float(kwargs['pt_range'][0]),
+            "pt_max": float(kwargs['pt_range'][1]),
+            "pt_cv": float(self.narrator.pt_cv),
+            "machine_bkd": int(machine_bkd),
+            "mtbf": float(kwargs['MTBF']) if machine_bkd else None,
+            "random_mtbf": int(bool(kwargs.get('random_MTBF', False))) if machine_bkd else None,
+            "mttr": float(kwargs['MTTR']) if machine_bkd else None,
+            "random_mttr": int(bool(kwargs.get('random_MTTR', False))) if machine_bkd else None,
+        }
+
     def verify_simulation_setting(self) -> None:
         """
         Check for potential incompatibility between stochastic occupation times (random MTTR or
         variable processing times) and deterministic mathematical-optimization schedulers.
         """
         occ_variability = self.kwargs.get('random_MTTR', False) or self.kwargs.get('processing_time_variability', False)
-        is_opt_scheduler = self.kwargs.get('sqc_method') in (
-            SequencingMethod.GurobiOptimizer,
-            SequencingMethod.ORTools,
-        )
+        is_opt_scheduler = is_optimization_scheduler(self.kwargs.get('sqc_method'))
         if occ_variability and is_opt_scheduler:
             user_input = input(
                 "WARNING: Machine occupation time variance enabled when using optimization algorithm-based scheduler! "

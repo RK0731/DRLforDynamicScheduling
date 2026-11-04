@@ -21,7 +21,6 @@ from ortools.sat.python import cp_model
 from tabulate import tabulate
 
 # project modules
-from .sequencing_rule import SequencingMethod
 from ..simulator.job import Job
 from ..simulator.machine import Machine
 
@@ -51,11 +50,14 @@ class CentralScheduler:
         self.build_schedule_event = self.env.event()
         self.last_trigger_type = "INITIAL"
 
-        # Select the mathematical optimization backend solver
-        if self.sqc_method == SequencingMethod.GurobiOptimizer:
-            self.scheduler = GurobiOptimizer
-        elif self.sqc_method == SequencingMethod.ORTools:
-            self.scheduler = ORTools
+        # Select the mathematical optimization backend solver.
+        # `solver_cls` can be injected explicitly (useful for tests or experiments);
+        # otherwise it is resolved from the scheduling-method name via the registry below.
+        self.scheduler = kwargs.get("solver_cls") or resolve_optimization_solver(self.sqc_method)
+        if self.scheduler is None:
+            raise ValueError(
+                f"No optimization solver registered for sqc_method={self.sqc_method!r}"
+            )
 
         # Register the continuous schedule-building SimPy process
         self.env.process(self.solve_problem_process())
@@ -672,3 +674,48 @@ class GurobiOptimizer:
             over_extended_problem = None
 
         return converted_var_op_begin_t, over_extended_problem, status_name
+
+
+# ---------------------------------------------------------------------------
+# Centralized-solver registry
+# ---------------------------------------------------------------------------
+# Single source of truth mapping a scheduling-method name to the class that
+# implements the centralized optimizer. `Machine`s never call these directly;
+# `CentralScheduler` resolves the backend here and dispatches to it, and both the
+# simulator and the narrator use `is_optimization_scheduler` to decide whether a
+# centralized schedule is needed at all.
+#
+# Every registered solver must expose the same classmethod contract:
+#
+#     solve_scheduling_problem(logger, env, m_list, job_intersections,
+#                              remaining_trajectories, in_system_jobs)
+#         -> (var_op_begin_t, over_extended_problem, status_name)
+#
+# To override or extend a solver (custom objective, a mock in tests, a new
+# CP/MILP backend, ...), subclass an existing class and replace the registry
+# entry, or register a new name:
+#
+#     from src.scheduler.scheduler import OPTIMIZATION_SOLVERS, ORTools
+#     class MyORTools(ORTools):
+#         @classmethod
+#         def solve_scheduling_problem(cls, *args, **kwargs):
+#             ...  # custom logic
+#     OPTIMIZATION_SOLVERS["ORTools"] = MyORTools
+#
+# Alternatively, inject a one-off backend when constructing the shopfloor:
+#     Shopfloor(..., sqc_method=SequencingMethod.ORTools, solver_cls=MyORTools)
+OPTIMIZATION_SOLVERS = {
+    "GurobiOptimizer": GurobiOptimizer,
+    "ORTools": ORTools,
+}
+
+
+def resolve_optimization_solver(sqc_method):
+    """Return the solver class backing ``sqc_method``, or ``None`` for reactive heuristics."""
+    name = getattr(sqc_method, "__name__", str(sqc_method))
+    return OPTIMIZATION_SOLVERS.get(name)
+
+
+def is_optimization_scheduler(sqc_method) -> bool:
+    """Whether ``sqc_method`` selects a centralized optimization scheduler."""
+    return resolve_optimization_solver(sqc_method) is not None

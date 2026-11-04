@@ -18,7 +18,10 @@ class SequencingMethod:
     @classmethod
     def LIFO(cls, jobs, *args, **kwargs) -> int:
         """Last-In, First-Out: pick the most recently arrived job in the queue."""
-        return -1
+        # Return a concrete (non-negative) queue index rather than Python's -1 alias:
+        # the index is later reused by `Machine.after_operation` to pop the processed
+        # job, and a stale `-1` would pop whatever happens to be last at that time.
+        return len(jobs) - 1
 
     @classmethod
     def Slack(cls, jobs, *args, **kwargs) -> int:
