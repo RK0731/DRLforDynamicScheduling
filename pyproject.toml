@@ -1,0 +1,27 @@
+[project]
+name = "drl-dynamic-scheduling"
+version = "0.1.0"
+description = "Multi-agent imitational, chronological, and asynchronous reinforcement learning framework for dynamic production scheduling"
+readme = "README.md"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "numpy>=2.2,<3",
+    "simpy>=4.1.1,<5",
+    "tabulate>=0.8.9,<1",
+    "ortools>=9.15,<10",
+    "torch>=2.6,<3",
+]
+
+[project.optional-dependencies]
+gurobi = ["gurobipy>=12,<14"]
+plot = ["matplotlib>=3.10,<4"]
+analysis = [
+    "pandas>=2.2,<3",
+    "scikit-learn>=1.6,<2",
+    "h5py>=3.10,<4",
+    "PyYAML>=6.0,<7",
+]
+
+[tool.uv]
+# This is an application/research repository, not an installable library.
+package = false

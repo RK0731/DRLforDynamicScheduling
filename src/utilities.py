@@ -6,19 +6,22 @@ Utility module providing logging configuration and Gantt chart visualization for
 
 from datetime import datetime as dt
 import copy
+from contextlib import closing
 import json
 import logging
 from logging.config import dictConfig
+import os
 from pathlib import Path
 import shutil
 import sqlite3
+import time
 from typing import Optional
 
-import matplotlib.pyplot as plt
 import numpy as np
 
-# Root directory where all timestamped simulation log folders and the persistent SQLite database are stored
-LOG_ROOT_DIR = Path.cwd() / 'logs'
+# Root directory where all timestamped simulation log folders and the persistent SQLite database are stored.
+# `SIM_LOG_ROOT` allows tests and batch jobs to isolate logs without touching the project's `logs/` folder.
+LOG_ROOT_DIR = Path(os.environ.get("SIM_LOG_ROOT", str(Path.cwd() / 'logs')))
 DEFAULT_DB_PATH = LOG_ROOT_DIR / 'simulation.db'
 LOG_DIR = LOG_ROOT_DIR / dt.now().strftime("%Y%m%d-%H%M%S%f")
 
@@ -66,21 +69,40 @@ LOG_CONFIG = {
 }
 
 
-def setup_logger(stream: bool = True, keep: int = 3) -> logging.Logger:
+def _prune_log_dirs(keep: int = 3) -> None:
+    """Delete older timestamped log directories, keeping the `keep` most recent.
+
+    Non-directory files (such as `simulation.db`) are never touched. The operation is
+    best-effort: concurrent multi-process runs may delete a folder between `iterdir()`
+    and `stat()`, which must not crash the simulation.
+    """
+    if keep <= 0:
+        return
+    try:
+        folders = [f for f in LOG_ROOT_DIR.iterdir() if f.is_dir()]
+        folders.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+        for folder_path in folders[keep:]:
+            shutil.rmtree(folder_path, ignore_errors=True)
+    except FileNotFoundError:
+        # Another worker pruned a directory between listing and stat.
+        pass
+
+
+def setup_logger(stream: bool = True, keep: int = 3, prune: bool = True) -> logging.Logger:
     """
     Create a timestamped log directory, prune old log directories beyond `keep` (default 3),
     and initialize the 'sim_logger' logger instance.
     Note: Non-directory files in `LOG_ROOT_DIR` (such as `simulation.db`) are never deleted.
+
+    `prune=False` is used by child processes of `SimulatorMultiThread`: only the parent
+    may prune the shared log root, otherwise workers can delete each other's active logs.
     """
     # Generate a fresh timestamped folder for this simulation run
     current_log_dir = LOG_ROOT_DIR / dt.now().strftime("%Y%m%d-%H%M%S%f")
     current_log_dir.mkdir(parents=True, exist_ok=True)
 
-    # Prune obsolete log folders from root logging directory (ignore non-directory files such as simulation.db)
-    folders = [f for f in LOG_ROOT_DIR.iterdir() if f.is_dir()]
-    folders.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-    for folder_path in folders[keep:]:
-        shutil.rmtree(folder_path, ignore_errors=True)
+    if prune:
+        _prune_log_dirs(keep)
 
     # Deep-copy LOG_CONFIG so disabling stream handler does not permanently mutate the template dictionary
     config = copy.deepcopy(LOG_CONFIG)
@@ -162,6 +184,8 @@ class SimulationDatabase:
     CREATE TABLE IF NOT EXISTS runs (
         run_id           INTEGER PRIMARY KEY AUTOINCREMENT,
         created_at       TEXT    NOT NULL,
+        status           TEXT    NOT NULL DEFAULT 'running',
+        error            TEXT,
         seed             INTEGER NOT NULL,
         sqc_method       TEXT    NOT NULL,
         m_no             INTEGER NOT NULL,
@@ -222,6 +246,7 @@ class SimulationDatabase:
         expected_pt       REAL    NOT NULL,
         actual_pt         REAL    NOT NULL,
         scheduled_begin_t REAL,
+        completed         INTEGER NOT NULL DEFAULT 1,
         PRIMARY KEY (run_id, j_idx, op_seq),
         FOREIGN KEY (run_id, j_idx) REFERENCES jobs(run_id, j_idx) ON DELETE CASCADE
     );
@@ -294,22 +319,61 @@ class SimulationDatabase:
     CREATE INDEX IF NOT EXISTS idx_sim_events_run_type   ON sim_events(run_id, event_type);
     """
 
-    def __init__(self, db_path: Optional[Path] = None):
+    def __init__(self, db_path: Optional[Path] = None, init_schema: bool = True):
         self.db_path = Path(db_path) if db_path is not None else DEFAULT_DB_PATH
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._init_schema()
+        # A multi-process parent initializes the schema once; workers skip it to avoid
+        # racing on `PRAGMA journal_mode = WAL`, which requires an exclusive lock.
+        if init_schema:
+            self._init_schema()
 
     def _init_schema(self) -> None:
         """Create the 7 tables and indexes if they do not exist, and enable WAL mode for concurrency."""
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
-            conn.execute("PRAGMA journal_mode = WAL;")
-            conn.executescript(self.SCHEMA_SQL)
-            # Lightweight migration for databases created by earlier schema versions
-            self._drop_legacy_columns(conn)
+        last_error = None
+        for attempt in range(10):
+            try:
+                with closing(sqlite3.connect(self.db_path, timeout=30.0)) as conn:
+                    # `PRAGMA journal_mode = WAL` can return SQLITE_BUSY immediately even
+                    # with a busy timeout, so retry with a short backoff when workers race.
+                    conn.execute("PRAGMA busy_timeout = 30000;")
+                    conn.execute("PRAGMA journal_mode = WAL;")
+                    conn.executescript(self.SCHEMA_SQL)
+                    # Lightweight migration for databases created by earlier schema versions
+                    self._migrate_schema(conn)
+                    # `closing()` only closes the connection; commit DDL/migration changes explicitly.
+                    conn.commit()
+                return
+            except sqlite3.OperationalError as exc:
+                last_error = exc
+                if "locked" not in str(exc).lower() or attempt == 9:
+                    raise
+                time.sleep(0.2 * (attempt + 1))
+        raise last_error
 
-    @staticmethod
-    def _drop_legacy_columns(conn: sqlite3.Connection) -> None:
-        """Drop obsolete columns from pre-existing tables so old DBs converge to the current schema."""
+    # Columns introduced after the original schema. `CREATE TABLE IF NOT EXISTS` never
+    # alters an existing table, so old databases must be upgraded explicitly.
+    ADDED_COLUMNS = {
+        "runs": {
+            "status": "TEXT NOT NULL DEFAULT 'running'",
+            "error": "TEXT",
+        },
+        "operations": {
+            "completed": "INTEGER NOT NULL DEFAULT 1",
+        },
+        "decisions": {
+            "candidates_json": "TEXT",
+            "state_json": "TEXT",
+            "action": "INTEGER",
+            "reward": "REAL",
+            "next_state_json": "TEXT",
+            "episode_done": "INTEGER",
+        },
+    }
+
+    @classmethod
+    def _migrate_schema(cls, conn: sqlite3.Connection) -> None:
+        """Converge an existing database to the current schema (drop legacy + add new columns)."""
+        # 1. Drop obsolete columns from pre-existing tables.
         legacy_columns = {"decisions": ["rule_picks_json"]}
         for table, columns in legacy_columns.items():
             existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
@@ -317,13 +381,27 @@ class SimulationDatabase:
                 if column in existing:
                     conn.execute(f"ALTER TABLE {table} DROP COLUMN {column}")
 
+        # 2. Add columns introduced by newer schema versions.
+        for table, columns in cls.ADDED_COLUMNS.items():
+            existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+            for column, declaration in columns.items():
+                if column not in existing:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
+
+        # 3. Backfill `runs.status` for episodes finalized before the column existed.
+        # `actual_span` is only written by `finalize_run`, so it is a reliable marker.
+        conn.execute(
+            "UPDATE runs SET status = 'completed' "
+            "WHERE status = 'running' AND actual_span IS NOT NULL"
+        )
+
     def create_run(self, run_record: dict) -> int:
         """
         Insert a `runs` row with the episode's configuration upfront and return its `run_id`.
         This enables streaming child rows (e.g., `sim_events`) against a valid foreign key
         before the episode's summary KPIs are known at the end of the simulation.
         """
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with closing(sqlite3.connect(self.db_path, timeout=30.0)) as conn:
             conn.execute("PRAGMA foreign_keys = ON;")
             cursor = conn.cursor()
             cursor.execute(
@@ -348,7 +426,7 @@ class SimulationDatabase:
         """Batch-insert chronological simulation events into `sim_events` in a single transaction."""
         if not events:
             return
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with closing(sqlite3.connect(self.db_path, timeout=30.0)) as conn:
             conn.execute("PRAGMA foreign_keys = ON;")
             cursor = conn.cursor()
             cursor.executemany(
@@ -375,7 +453,7 @@ class SimulationDatabase:
         `breakdowns`, `schedule_cycles`) in a single transaction at the end of the simulation.
         """
         decisions_records = decisions_records or []
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with closing(sqlite3.connect(self.db_path, timeout=30.0)) as conn:
             conn.execute("PRAGMA foreign_keys = ON;")
             cursor = conn.cursor()
 
@@ -397,8 +475,9 @@ class SimulationDatabase:
                     """
                     INSERT INTO operations (
                         run_id, j_idx, op_seq, m_idx, decision_type, queue_len_at_dec,
-                        arrival_t, begin_t, end_t, wait_t, expected_pt, actual_pt, scheduled_begin_t
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        arrival_t, begin_t, end_t, wait_t, expected_pt, actual_pt,
+                        scheduled_begin_t, completed
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     [(run_id, *row) for row in operations_records],
                 )
@@ -443,11 +522,13 @@ class SimulationDatabase:
 
     def finalize_run(self, run_id: int, kpi_record: dict) -> None:
         """Update the `runs` row with final summary KPIs computed at the end of the episode."""
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with closing(sqlite3.connect(self.db_path, timeout=30.0)) as conn:
             conn.execute("PRAGMA foreign_keys = ON;")
             conn.execute(
                 """
                 UPDATE runs SET
+                    status           = 'completed',
+                    error            = NULL,
                     actual_span      = :actual_span,
                     actual_utliz     = :actual_utliz,
                     total_jobs       = :total_jobs,
@@ -468,6 +549,21 @@ class SimulationDatabase:
             )
             conn.commit()
 
+    def fail_run(self, run_id: int, error: str) -> None:
+        """Mark an already-created run as failed and persist the traceback.
+
+        Without this, an exception after ``create_run`` would leave an orphaned
+        ``runs`` row with NULL KPIs and no child records, indistinguishable from a
+        run that is still in progress.
+        """
+        with closing(sqlite3.connect(self.db_path, timeout=30.0)) as conn:
+            conn.execute("PRAGMA foreign_keys = ON;")
+            conn.execute(
+                "UPDATE runs SET status = 'failed', error = ? WHERE run_id = ?",
+                (error, run_id),
+            )
+            conn.commit()
+
 
 def draw_gantt_chart(logger: logging.Logger, recorder, **kwargs) -> None:
     """
@@ -475,6 +571,15 @@ def draw_gantt_chart(logger: logging.Logger, recorder, **kwargs) -> None:
     Plotting is skipped when simulation span >= 250 to conserve memory.
     """
     if kwargs.get('span', 0) >= 250:
+        logger.info("Gantt chart skipped for span >= 250 to conserve memory.")
+        return
+
+    # Lazy import: matplotlib is only needed when a chart is actually drawn. This keeps
+    # headless/benchmark runs and the offline analysis CLI importable without a GUI stack.
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:
+        logger.warning("matplotlib is not installed; skipping the Gantt chart.")
         return
 
     op_data = recorder.j_operation_dict

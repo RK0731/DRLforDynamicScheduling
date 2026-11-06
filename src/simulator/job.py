@@ -120,6 +120,9 @@ class Job:
                 expected_pt,
                 actual_pt,
                 round(float(scheduled_begin_t), 2) if scheduled_begin_t is not None else None,
+                # `completed` is finalized in `Recorder.finalize_episode`: the last operation
+                # of a job still processing when the episode ends is marked incomplete.
+                1,
             )
         )
         # Update job status to processing

@@ -15,10 +15,11 @@ from pathlib import Path
 import time
 from typing import Dict, List
 
-import gurobipy as gp
-from gurobipy import GRB
-from ortools.sat.python import cp_model
 from tabulate import tabulate
+
+# NOTE: `gurobipy` and `ortools` are imported lazily inside their solver classes.
+# This keeps reactive/heuristic simulations runnable in environments where only
+# one (or neither) optimization backend is installed.
 
 # project modules
 from ..simulator.job import Job
@@ -118,10 +119,24 @@ class CentralScheduler:
                         self.remaining_trajectories,
                         self.in_system_jobs,
                     )
-                    self.convert_to_schedule(var_op_begin_t)
-                    # Record over-extended problem instance if solver took > 1s
-                    if over_extended_problem is not None:
-                        self.ext_prob_log[int(self.env.now)] = over_extended_problem
+                    if not var_op_begin_t:
+                        # The solver reported infeasible / unknown / timed out without a feasible
+                        # solution. NEVER feed partial or undefined variable values into the
+                        # schedule: fall back to the deterministic passive schedule instead.
+                        self.logger.warning(
+                            "Solver {} returned no usable schedule (status={}); "
+                            "falling back to the passive schedule.".format(
+                                getattr(self.scheduler, "__name__", self.scheduler),
+                                solver_status,
+                            )
+                        )
+                        self.solve_without_optimization()
+                        solver_status = f"{solver_status}_PASSIVE_FALLBACK"
+                    else:
+                        self.convert_to_schedule(var_op_begin_t)
+                        # Record over-extended problem instance if solver took > 1s
+                        if over_extended_problem is not None:
+                            self.ext_prob_log[int(self.env.now)] = over_extended_problem
 
             cycle_expense = time.time() - begin_t
             if solver_status != "PASSIVE":
@@ -248,6 +263,10 @@ class CentralScheduler:
         for m in self.m_list:
             if not self.schedule[m.m_idx]:
                 m.next_job_in_schedule = -1
+                # Wake any machine blocked in strategic idleness: with an empty schedule it
+                # must re-evaluate (and fall back to its queue) instead of waiting forever
+                # for a job index of -1 that can never arrive.
+                m.notify_schedule_update()
                 continue
             m.next_job_in_schedule = self.schedule[m.m_idx][0]
             m.update_status_after_new_schedule()
@@ -300,6 +319,9 @@ class ORTools:
         remaining_trajectories: Dict[int, list],
         in_system_jobs: Dict[int, Job],
     ):
+        # Lazy import: heuristic-only simulations must not require OR-Tools to be installed.
+        from ortools.sat.python import cp_model
+
         start_t = time.time()
         scale = cls.SCALE
 
@@ -405,10 +427,22 @@ class ORTools:
         )
 
         """
-        PART III: Specify hierarchical optimization objective and solve the CP-SAT model
-        Tier 1 (Primary): Minimize cumulative tardiness (`var_cum_tardiness`)
-        Tier 2 (Secondary): Minimize schedule makespan (`var_makespan`)
-        Tier 3 (Tertiary): Minimize sum of operation start times (`var_sum_op_begin_t`) to avoid lazy delays
+        PART III: Hierarchical optimization with a TRUE lexicographic order.
+
+        Tier 1 (Primary):   minimize cumulative tardiness (`var_cum_tardiness`).
+        Tier 2 (Secondary): minimize schedule makespan (`var_makespan`).
+        Tier 3 (Tertiary):  minimize sum of operation start times (`var_sum_op_begin_t`).
+
+        CP-SAT exposes a single scalar objective, so the previous implementation used
+        fixed weights (1e7 / 1e4 / 1). Those weights do NOT enforce a hierarchy: with
+        scaled time, one unit of tardiness could be traded for 1000 units of makespan,
+        and the tertiary term could outweigh several units of tardiness. Instead, solve
+        in two stages:
+
+          1. minimize tardiness and keep its optimal (or best feasible) value;
+          2. constrain tardiness to that value and minimize
+             `makespan * W + sum(start)`, where `W > max_possible_sum(start)` makes
+             makespan strictly dominate the tertiary term.
         """
         logger.debug(
             'Problem spec.: [{} Jobs], [{} Ops]. Constraints: [{} op_sqc]; [{} op_overlap]; '
@@ -421,16 +455,50 @@ class ORTools:
                 model_spec['J_release'],
             )
         )
-        model.Minimize(var_cum_tardiness * 10_000_000 + var_makespan * 10_000 + var_sum_op_begin_t)
-        solver = cp_model.CpSolver()
-        solver.parameters.max_time_in_seconds = 10.0
-        status = solver.Solve(model)
+
+        # ---- Stage 1: minimize cumulative tardiness -------------------------
+        model.Minimize(var_cum_tardiness)
+        solver_t1 = cp_model.CpSolver()
+        solver_t1.parameters.max_time_in_seconds = 10.0
+        status_t1 = solver_t1.Solve(model)
+        status_t1_name = solver_t1.StatusName(status_t1)
+
+        if status_t1 not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            time_expense = round(time.time() - start_t, 3)
+            logger.warning(
+                "OR-Tools found no feasible schedule (status={}, {:.3f}s); "
+                "the passive schedule will be used.".format(status_t1_name, time_expense)
+            )
+            return None, None, status_t1_name
+
+        opt_tardiness = int(round(solver_t1.ObjectiveValue()))
+
+        # ---- Stage 2: keep Tier 1 optimal, then optimize makespan + sum(start)
+        # `max_sum_op_begin` bounds the largest possible value of `var_sum_op_begin_t`
+        # (each of the `len(all_ops)` start variables is in [now_scaled, ul]).
+        max_sum_op_begin = max(1, len(all_ops) * ul)
+        model.Add(var_cum_tardiness <= opt_tardiness)
+        model.ClearObjective()
+        model.Minimize(var_makespan * (max_sum_op_begin + 1) + var_sum_op_begin_t)
+
+        solver_t2 = cp_model.CpSolver()
+        solver_t2.parameters.max_time_in_seconds = 5.0
+        status_t2 = solver_t2.Solve(model)
+        status_t2_name = solver_t2.StatusName(status_t2)
+
+        if status_t2 in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            solver = solver_t2
+            status_name = status_t2_name
+        else:
+            # The Stage-1 solution is still feasible and satisfies the Tier-1 bound;
+            # reuse it rather than dispatching an undefined / partial solution.
+            solver = solver_t1
+            status_name = f"{status_t1_name}_T2_{status_t2_name}"
 
         """
         PART IV: Extract solution and convert scaled integers back to simulation time units
         """
         time_expense = round(time.time() - start_t, 3)
-        status_name = solver.StatusName(status)
         logger.debug(
             "OR_Tools CP Model solving process elapsed, model status: {}, time expense: {}s".format(
                 status_name, time_expense
@@ -481,12 +549,19 @@ class GurobiOptimizer:
         remaining_trajectories: Dict[int, list],
         in_system_jobs: Dict[int, Job],
     ):
+        # Lazy import: heuristic-only simulations must not require Gurobi to be installed.
+        import gurobipy as gp
+        from gurobipy import GRB
+
         grb_msg = {
             2: 'optimal',
             3: 'infeasible',
             4: 'infeasible or unbounded',
+            5: 'unbounded',
             9: 'time limit',
             11: 'interrupted',
+            12: 'numeric',
+            13: 'suboptimal',
         }
         start_t = time.time()
 
@@ -662,6 +737,17 @@ class GurobiOptimizer:
                         status_name, time_expense
                     )
                 )
+
+                # `var.X` is undefined when Gurobi has no feasible solution (infeasible,
+                # unbounded, or a time limit reached before the first incumbent). Guard
+                # before extraction so the scheduler can fall back to the passive schedule.
+                if model.SolCount == 0:
+                    logger.warning(
+                        "Gurobi found no feasible schedule (status={}, {:.3f}s); "
+                        "the passive schedule will be used.".format(status_name, time_expense)
+                    )
+                    return None, None, status_name
+
                 converted_var_op_begin_t = {key: round(var.X, 1) for key, var in var_op_begin_t.items()}
 
         # Record problem instance if solve time exceeded 1 second
@@ -703,7 +789,7 @@ class GurobiOptimizer:
 #     OPTIMIZATION_SOLVERS["ORTools"] = MyORTools
 #
 # Alternatively, inject a one-off backend when constructing the shopfloor:
-#     Shopfloor(..., sqc_method=SequencingMethod.ORTools, solver_cls=MyORTools)
+#     Shopfloor(..., sqc_method="ORTools", solver_cls=MyORTools)
 OPTIMIZATION_SOLVERS = {
     "GurobiOptimizer": GurobiOptimizer,
     "ORTools": ORTools,
@@ -711,9 +797,20 @@ OPTIMIZATION_SOLVERS = {
 
 
 def resolve_optimization_solver(sqc_method):
-    """Return the solver class backing ``sqc_method``, or ``None`` for reactive heuristics."""
+    """Return the solver class backing ``sqc_method``, or ``None`` for reactive heuristics.
+
+    ``sqc_method`` may be a registry name (``"ORTools"``), a solver class, or a
+    heuristic callable. Name lookup is tried first so registry overrides by name keep
+    working; an identity fallback covers classes registered under an alias key.
+    """
     name = getattr(sqc_method, "__name__", str(sqc_method))
-    return OPTIMIZATION_SOLVERS.get(name)
+    solver = OPTIMIZATION_SOLVERS.get(name)
+    if solver is not None:
+        return solver
+    for registered in OPTIMIZATION_SOLVERS.values():
+        if registered is sqc_method:
+            return registered
+    return None
 
 
 def is_optimization_scheduler(sqc_method) -> bool:
