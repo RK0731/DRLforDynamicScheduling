@@ -79,6 +79,7 @@ Command line::
 
 from __future__ import annotations
 
+from contextlib import closing
 import json
 import sqlite3
 from bisect import bisect_left, bisect_right
@@ -107,7 +108,7 @@ class ShopfloorStateReconstructor:
 
     # ------------------------------------------------------------------ loading
     def _latest_run_id(self) -> int:
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn:
             row = conn.execute("SELECT MAX(run_id) FROM runs").fetchone()
         if row is None or row[0] is None:
             raise ValueError(f"No simulation runs found in {self.db_path}")
@@ -115,7 +116,7 @@ class ShopfloorStateReconstructor:
 
     def _load(self) -> None:
         """Load and index the run's jobs, operations, breakdowns, decisions, and events."""
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn:
             conn.row_factory = sqlite3.Row
 
             run = conn.execute("SELECT * FROM runs WHERE run_id = ?", (self.run_id,)).fetchone()

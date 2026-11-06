@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import closing
 import json
 import sqlite3
 import unittest
@@ -223,7 +224,7 @@ class TestSimulationIntegrity(TempProjectTestCase):
 
         counts = []
         for path in (db_default, db_streamed):
-            with sqlite3.connect(path) as conn:
+            with closing(sqlite3.connect(path)) as conn:
                 counts.append(conn.execute("SELECT COUNT(*) FROM sim_events").fetchone()[0])
         self.assertEqual(counts[0], counts[1])
         self.assertGreater(counts[0], 5)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import closing
 import sqlite3
 import unittest
 
@@ -49,7 +50,7 @@ class TestSimulationDatabase(TempProjectTestCase):
 
     def test_schema_contains_new_columns(self):
         SimulationDatabase(self.db_path)
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn:
             run_cols = {row[1] for row in conn.execute("PRAGMA table_info(runs)")}
             op_cols = {row[1] for row in conn.execute("PRAGMA table_info(operations)")}
             dec_cols = {row[1] for row in conn.execute("PRAGMA table_info(decisions)")}
@@ -63,7 +64,7 @@ class TestSimulationDatabase(TempProjectTestCase):
 
     def test_migration_restores_columns_and_drops_legacy(self):
         SimulationDatabase(self.db_path)
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn:
             conn.execute("ALTER TABLE runs DROP COLUMN status")
             conn.execute("ALTER TABLE runs DROP COLUMN error")
             conn.execute("ALTER TABLE operations DROP COLUMN completed")
@@ -72,7 +73,7 @@ class TestSimulationDatabase(TempProjectTestCase):
             conn.commit()
 
         SimulationDatabase(self.db_path)
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn:
             run_cols = {row[1] for row in conn.execute("PRAGMA table_info(runs)")}
             op_cols = {row[1] for row in conn.execute("PRAGMA table_info(operations)")}
             dec_cols = {row[1] for row in conn.execute("PRAGMA table_info(decisions)")}
@@ -85,14 +86,14 @@ class TestSimulationDatabase(TempProjectTestCase):
     def test_run_lifecycle_running_completed_failed(self):
         db = SimulationDatabase(self.db_path)
         run_id = db.create_run(self._run_record())
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn:
             self.assertEqual(
                 conn.execute("SELECT status FROM runs WHERE run_id=?", (run_id,)).fetchone()[0],
                 "running",
             )
 
         db.finalize_run(run_id, self._finalize_record())
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn:
             row = conn.execute(
                 "SELECT status, error, total_jobs, mean_tardiness FROM runs WHERE run_id=?",
                 (run_id,),
@@ -104,7 +105,7 @@ class TestSimulationDatabase(TempProjectTestCase):
 
         failed_id = db.create_run(self._run_record("2026-01-02 00:00:00"))
         db.fail_run(failed_id, "boom")
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn:
             row = conn.execute(
                 "SELECT status, error FROM runs WHERE run_id=?", (failed_id,)
             ).fetchone()
@@ -113,7 +114,7 @@ class TestSimulationDatabase(TempProjectTestCase):
 
     def test_migration_backfills_completed_status_for_old_rows(self):
         SimulationDatabase(self.db_path)
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn:
             run_id = conn.execute(
                 """
                 INSERT INTO runs (
@@ -125,7 +126,7 @@ class TestSimulationDatabase(TempProjectTestCase):
             conn.commit()
 
         SimulationDatabase(self.db_path)
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn:
             status = conn.execute(
                 "SELECT status FROM runs WHERE run_id=?", (run_id,)
             ).fetchone()[0]

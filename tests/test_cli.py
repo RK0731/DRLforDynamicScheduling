@@ -95,7 +95,7 @@ class TestCliEntryPoint(TempProjectTestCase):
             timeout=60,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        with sqlite3.connect(db_path) as conn:
+        with contextlib.closing(sqlite3.connect(db_path)) as conn:
             row = conn.execute("SELECT status, total_jobs FROM runs").fetchone()
         self.assertEqual(row[0], "completed")
         self.assertGreater(row[1], 0)

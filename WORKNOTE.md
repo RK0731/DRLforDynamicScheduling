@@ -185,8 +185,8 @@ Implemented the review's P0/P1 items:
 Added a stdlib-`unittest` suite (no pytest dependency) that can be run after every change:
 
 ```bash
-python -m unittest discover -s tests -t . -v
-# equivalents: python test.py   or   make test
+uv run python -m unittest discover -s tests -t . -v
+# equivalents: uv run python test.py   or   make test
 ```
 
 - `tests/base.py` isolates each test in a temporary directory by monkeypatching `src.utilities.LOG_ROOT_DIR` / `DEFAULT_DB_PATH` and exporting `SIM_LOG_ROOT` (inherited by spawn-based workers). The project's `logs/simulation.db` and retained log folders are never touched.
@@ -198,7 +198,22 @@ python -m unittest discover -s tests -t . -v
 - `tests/test_reconstruction.py`: exact per-decision queue replay, summary counts, arbitrary-time snapshots, and incomplete-operation phase semantics.
 - `tests/test_cli.py`: parser defaults/flags, numeric validation, subprocess FIFO smoke run, non-interactive abort exit code, and usage-error exit code.
 
-**Result:** 42 tests pass in ~5 s with the project venv (`py_compile`/`git diff --check` also clean).
+**Result:** 43 tests pass in ~5 s with the project venv (`py_compile`/`git diff --check` also clean).
+
+### 1.10 uv Migration (Python 3.13 + Locked Dependencies)
+
+- Installed **uv 0.13.7** (`brew install uv`) and a managed **CPython 3.13.18** (`uv python install 3.13`).
+- Changed `.python-version` from the machine-specific venv name `Py310DRLVenv` to `3.13`.
+- Added `pyproject.toml` with `requires-python = ">=3.13,<3.14"` and `[tool.uv] package = false`:
+  - core: `numpy`, `simpy`, `tabulate`, `ortools`, `torch`;
+  - extras: `gurobi` (`gurobipy`), `plot` (`matplotlib`), `analysis` (`pandas`, `scikit-learn`, `h5py`, `PyYAML`).
+- Generated `uv.lock` (58 packages) and created `.venv` with `uv sync --all-extras` (38 installed packages). Key resolved versions: Python 3.13.18, numpy 2.5.4, simpy 4.1.2, tabulate 0.10.0, ortools 9.15.6755, torch 2.15.0, gurobipy 13.0.3, matplotlib 3.11.2, pandas 2.3.3, scikit-learn 1.9.1, h5py 3.16.0, PyYAML 6.0.3.
+- Regenerated `requirements.txt` as a pip-compatible export of `uv.lock` (`uv export --format requirements-txt --all-extras --no-hashes`); it is no longer hand-maintained.
+- Updated `Makefile` (`make sync`, `make test` via `uv run`), `.vscode/settings.json` (project `.venv`), and `.gitignore` (`.venv/`).
+- Fixed Python 3.13 `ResourceWarning: unclosed database` noise by wrapping every `sqlite3.connect` in `contextlib.closing` (production DB/analysis code and tests).
+- Verified under Python 3.13: all 43 tests pass (`uv run python -m unittest discover -s tests -t . -v`), and FIFO/ORTools `span=50` smoke runs complete with 5/5 jobs and 25 operations.
+
+Note: if an old pyenv virtualenv is still active, `uv run` prints `VIRTUAL_ENV=... does not match the project environment path .venv`; run `deactivate` once or ignore the warning — `uv run` still uses `.venv`.
 
 ---
 
@@ -253,7 +268,7 @@ Originally deferred ("we'll design the DRL table later"). The new `decisions` ta
 
 ### 3.5 Testing (P1 — mostly addressed)
 
-- `tests/` now contains 42 stdlib-`unittest` tests covering project-wide compilation/imports, rules, solver lexicographic/status behavior, FIFO/OR-Tools simulation invariants, same-seed reproducibility, streaming flush, solver fallback/failure, non-interactive guard, multi-process isolation, DB migration/status lifecycle, reconstruction, and CLI entry points. Run with `python -m unittest discover -s tests -t . -v` (or `python test.py` / `make test`).
+- `tests/` now contains 43 stdlib-`unittest` tests covering project-wide compilation/imports, rules, solver lexicographic/status behavior, FIFO/OR-Tools simulation invariants, same-seed reproducibility, streaming flush, solver fallback/failure, non-interactive guard, multi-process isolation, DB migration/status lifecycle, reconstruction, and CLI entry points. Run with `uv run python -m unittest discover -s tests -t . -v` (or `uv run python test.py` / `make test`).
 - Still worth adding: deterministic reproducibility (same seed → identical KPIs across two runs), a long-run streaming-threshold test, and explicit strategic-idleness state assertions. The Gurobi path cannot be exercised here without a valid license.
 
 ---
@@ -288,5 +303,5 @@ Originally deferred ("we'll design the DRL table later"). The new `decisions` ta
   FROM decisions WHERE run_id = 1 ORDER BY sim_t;
   ```
 - **Rebuild one decision in Python:** read `decisions.queue_json` / `candidates_json` for the chosen `(run_id, sim_t)`; no timeline reconstruction needed.
-- **Run a demo:** `python main.py -sqc ORTools -seed 42 -draw 0`
+- **Run a demo:** `uv run python main.py -sqc ORTools -seed 42 -draw 0`
 - **Inspect DB:** `sqlite3 logs/simulation.db` (`.tables`, `.schema decisions`).

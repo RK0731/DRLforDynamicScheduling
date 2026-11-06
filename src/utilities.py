@@ -6,6 +6,7 @@ Utility module providing logging configuration and Gantt chart visualization for
 
 from datetime import datetime as dt
 import copy
+from contextlib import closing
 import json
 import logging
 from logging.config import dictConfig
@@ -331,7 +332,7 @@ class SimulationDatabase:
         last_error = None
         for attempt in range(10):
             try:
-                with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+                with closing(sqlite3.connect(self.db_path, timeout=30.0)) as conn:
                     # `PRAGMA journal_mode = WAL` can return SQLITE_BUSY immediately even
                     # with a busy timeout, so retry with a short backoff when workers race.
                     conn.execute("PRAGMA busy_timeout = 30000;")
@@ -339,6 +340,8 @@ class SimulationDatabase:
                     conn.executescript(self.SCHEMA_SQL)
                     # Lightweight migration for databases created by earlier schema versions
                     self._migrate_schema(conn)
+                    # `closing()` only closes the connection; commit DDL/migration changes explicitly.
+                    conn.commit()
                 return
             except sqlite3.OperationalError as exc:
                 last_error = exc
@@ -398,7 +401,7 @@ class SimulationDatabase:
         This enables streaming child rows (e.g., `sim_events`) against a valid foreign key
         before the episode's summary KPIs are known at the end of the simulation.
         """
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with closing(sqlite3.connect(self.db_path, timeout=30.0)) as conn:
             conn.execute("PRAGMA foreign_keys = ON;")
             cursor = conn.cursor()
             cursor.execute(
@@ -423,7 +426,7 @@ class SimulationDatabase:
         """Batch-insert chronological simulation events into `sim_events` in a single transaction."""
         if not events:
             return
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with closing(sqlite3.connect(self.db_path, timeout=30.0)) as conn:
             conn.execute("PRAGMA foreign_keys = ON;")
             cursor = conn.cursor()
             cursor.executemany(
@@ -450,7 +453,7 @@ class SimulationDatabase:
         `breakdowns`, `schedule_cycles`) in a single transaction at the end of the simulation.
         """
         decisions_records = decisions_records or []
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with closing(sqlite3.connect(self.db_path, timeout=30.0)) as conn:
             conn.execute("PRAGMA foreign_keys = ON;")
             cursor = conn.cursor()
 
@@ -519,7 +522,7 @@ class SimulationDatabase:
 
     def finalize_run(self, run_id: int, kpi_record: dict) -> None:
         """Update the `runs` row with final summary KPIs computed at the end of the episode."""
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with closing(sqlite3.connect(self.db_path, timeout=30.0)) as conn:
             conn.execute("PRAGMA foreign_keys = ON;")
             conn.execute(
                 """
@@ -553,7 +556,7 @@ class SimulationDatabase:
         ``runs`` row with NULL KPIs and no child records, indistinguishable from a
         run that is still in progress.
         """
-        with sqlite3.connect(self.db_path, timeout=30.0) as conn:
+        with closing(sqlite3.connect(self.db_path, timeout=30.0)) as conn:
             conn.execute("PRAGMA foreign_keys = ON;")
             conn.execute(
                 "UPDATE runs SET status = 'failed', error = ? WHERE run_id = ?",

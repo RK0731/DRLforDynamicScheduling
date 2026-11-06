@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import compileall
 import importlib
+import tomllib
 import unittest
 
 from src.scheduler.scheduler import OPTIMIZATION_SOLVERS
@@ -49,12 +50,24 @@ class TestProjectIntegrity(unittest.TestCase):
             "README.md",
             "AGENTS.md",
             "WORKNOTE.md",
+            "pyproject.toml",
+            "uv.lock",
+            ".python-version",
             "requirements.txt",
             "main.py",
             "test.py",
             "Makefile",
         ):
             self.assertTrue((PROJECT_ROOT / name).exists(), name)
+
+    def test_python_version_is_pinned_to_313(self):
+        py_version = (PROJECT_ROOT / ".python-version").read_text().strip()
+        self.assertTrue(py_version.startswith("3.13"), py_version)
+
+        with (PROJECT_ROOT / "pyproject.toml").open("rb") as f:
+            project = tomllib.load(f)["project"]
+        self.assertIn("3.13", project["requires-python"])
+        self.assertIn("torch", " ".join(project["dependencies"]))
 
 
 if __name__ == "__main__":

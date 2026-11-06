@@ -13,8 +13,10 @@ The project tackles the **Dynamic Job Shop Scheduling Problem (DJSSP)** under re
 
 ## Requirements
 
-- **Python**: `>= 3.10`
-- **Dependencies**: Listed in `requirements.txt` (`simpy`, `numpy`, `ortools`, `gurobipy`, `torch`, `matplotlib`, `tabulate`, etc.)
+- **Python**: `>= 3.13, < 3.14` (pinned in `.python-version` and `pyproject.toml`)
+- **Project manager**: [`uv`](https://docs.astral.sh/uv/) (`brew install uv`)
+- **Dependencies**: Declared in `pyproject.toml`, locked in `uv.lock`. `requirements.txt` is a generated pip-compatible export for users not using `uv`.
+- **Optional extras**: `gurobi` (Gurobi MILP backend), `plot` (Gantt chart via matplotlib), `analysis` (pandas/scikit-learn/h5py/PyYAML).
 - **Solver Note**: The default scheduler is Google **OR-Tools CP-SAT** (`-sqc ORTools`), which needs no license. **Gurobi** (`-sqc GurobiOptimizer`) is optional and requires a valid license. Both optimization backends are imported lazily, so heuristic-only runs work even if neither package is installed.
 
 ## Project Structure
@@ -44,36 +46,48 @@ The project tackles the **Dynamic Job Shop Scheduling Problem (DJSSP)** under re
 │   │   └── exc.py                  # Custom simulator exception classes
 │   ├── analysis/                   # Offline replay / state reconstruction from the SQLite trace
 │   │   ├── state_reconstruction.py # ShopfloorStateReconstructor (full per-machine state at any time)
-│   │   └── __main__.py             # CLI: python -m src.analysis --run_id 1 --time 77.0
+│   │   └── __main__.py             # CLI: uv run python -m src.analysis --run_id 1 --time 77.0
 │   └── utilities.py                # Logger configuration, SQLite persistence, and Gantt chart plotting
 ├── main.py                         # Main CLI entry point to run simulations
+├── pyproject.toml                  # Project metadata and dependency groups (uv)
+├── uv.lock                         # Reproducible dependency lockfile (commit this)
+├── .python-version                 # Python 3.13
 ├── test.py                         # Convenience runner for the unittest suite
-├── Makefile                        # `make test` alias for the verification suite
+├── Makefile                        # `make sync` / `make test`
 ├── tests/                          # Stdlib-unittest verification suite (isolated temp DB/logs)
 ├── README.md                       # Project documentation
-└── requirements.txt                # Python package dependencies
+└── requirements.txt                # Generated pip-compatible export of uv.lock
 ```
 
 ## Quick Start & Usage
 
+Create the pinned Python 3.13 environment and install all optional extras:
+
+```bash
+brew install uv          # once
+uv sync --all-extras     # creates .venv from uv.lock
+```
+
+`uv sync` (without `--all-extras`) installs the core simulator, schedulers, and DRL dependencies; add `--extra plot` for Gantt charts, `--extra gurobi` for the Gurobi backend, or `--extra analysis` for pandas/scikit-learn/h5py/PyYAML.
+
 Run `main.py` for a demonstration (defaults to 5 machines, nominal span of 100 time units, 60% expected utilization, and the `ORTools` CP-SAT scheduler):
 
 ```bash
-python main.py
+uv run python main.py
 ```
 
 Use Google **OR-Tools** explicitly, a heuristic rule (`FIFO`, `LIFO`, `Slack`, `CR`, `SPT`, `LWKR`), or Gurobi (license required):
 
 ```bash
-python main.py -sqc ORTools
-python main.py -sqc CR -seed 42
-python main.py -sqc GurobiOptimizer   # requires a valid Gurobi license
+uv run python main.py -sqc ORTools
+uv run python main.py -sqc CR -seed 42
+uv run python main.py -sqc GurobiOptimizer   # requires a valid Gurobi license
 ```
 
 Run two independent episodes in parallel worker processes (each gets a distinct derived seed and its own `runs` row):
 
 ```bash
-python main.py -sqc FIFO -mt -tn 2 -seed 42
+uv run python main.py -sqc FIFO -mt -tn 2 -seed 42
 ```
 
 Stochastic occupation times (`-pt_v` / `-rnd_mttr`) with an optimization scheduler normally ask for confirmation. In CI or piped runs, pass `-y/--force` to proceed non-interactively; without it the run aborts with a clear error instead of hanging or silently skipping the prompt.
@@ -158,8 +172,8 @@ for state in recon.iter_snapshots():                   # one state per recorded 
 Or from the command line:
 
 ```bash
-python -m src.analysis --run_id 1 --time 77.0
-python -m src.analysis --run_id 1 --decision_id 42
+uv run python -m src.analysis --run_id 1 --time 77.0
+uv run python -m src.analysis --run_id 1 --decision_id 42
 ```
 
 Each snapshot is a JSON-serializable dict:
@@ -187,10 +201,10 @@ The `tests/` suite uses only the standard library `unittest` (no pytest dependen
 
 ```bash
 # Canonical command (run from the repository root)
-python -m unittest discover -s tests -t . -v
+uv run python -m unittest discover -s tests -t . -v
 
 # Convenience wrappers
-python test.py
+uv run python test.py
 make test
 ```
 

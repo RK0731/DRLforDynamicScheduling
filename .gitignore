@@ -13,10 +13,13 @@ modules*
 # Ignore any files or directories one level down from the context root named
 */modules
 
+# Local Python environments and tool caches
+.venv/
+.uv-cache/
+
 # Ignore any files or folders whose names end with or pattern at the end of any path part 
 *.pyc
 *.swp
-*.python-version
 *.vscode
 
 # Ignore any files or directories at any level, including the context root, 

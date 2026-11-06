@@ -32,6 +32,13 @@ In a job shop with $M$ machines (`m_no`), jobs arrive dynamically over time rath
 
 ## 2. Architecture & Module Guide
 
+### 2.0 Environment & Dependencies
+
+- **Python**: 3.13, pinned in `.python-version` (`3.13`) and `pyproject.toml` (`>=3.13,<3.14`).
+- **Manager**: `uv`. The project environment is `.venv`, created from `pyproject.toml` + `uv.lock` via `uv sync --all-extras`.
+- **Commands**: run everything through `uv run python ...`; use `uv add` / `uv lock` when changing dependencies. `requirements.txt` is a generated pip-compatible export, not the source of truth.
+- **Extras**: `gurobi` (optional license), `plot` (matplotlib/Gantt), `analysis` (pandas/scikit-learn/h5py/PyYAML). Core includes `numpy`, `simpy`, `tabulate`, `ortools`, and `torch`.
+
 ### 2.1 Entry Point & Utilities
 - `main.py`: CLI parser that validates numeric ranges and maps flags into `Simulator.run(**kwargs)` (single process) or `SimulatorMultiThread(**kwargs)` (`-mt/--multi_thread`). Default scheduler is `ORTools`; `-y/--force` enables non-interactive stochastic runs, and `--no-random_MTBF` disables exponential MTBF sampling.
 - `src/utilities.py`:
@@ -153,8 +160,8 @@ Built on **SimPy** (`simpy.Environment`):
 Run the test suite after **any** change to the simulator, schedulers, database, or reconstruction code:
 
 ```bash
-python -m unittest discover -s tests -t . -v
-# equivalents: python test.py   or   make test
+uv run python -m unittest discover -s tests -t . -v
+# equivalents: uv run python test.py   or   make test
 ```
 
 The suite is stdlib-`unittest` only (pytest is not required). `tests/base.py` monkeypatches `src.utilities.LOG_ROOT_DIR` / `DEFAULT_DB_PATH` and exports `SIM_LOG_ROOT`, and every test uses a temporary database, so tests never pollute the project's `logs/simulation.db` or retained log folders.

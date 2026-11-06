@@ -1,5 +1,8 @@
-PYTHON ?= python
+UV ?= uv
 
-.PHONY: test
+.PHONY: sync test
+sync:
+	$(UV) sync --all-extras
+
 test:
-	PYTHONPATH=. $(PYTHON) -m unittest discover -s tests -t . -v
+	$(UV) run python -m unittest discover -s tests -t . -v
