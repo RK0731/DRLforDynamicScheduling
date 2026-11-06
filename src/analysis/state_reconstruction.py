@@ -174,8 +174,10 @@ class ShopfloorStateReconstructor:
                 rows = []  # database predates the `decisions` table
             for row in rows:
                 dec = dict(row)
-                dec["queue"] = json.loads(dec.pop("queue_json"))
-                dec["candidates"] = json.loads(dec.pop("candidates_json"))
+                # `candidates_json` may be NULL for rows written by an older schema;
+                # treat missing replay metadata as an empty queue/candidate map.
+                dec["queue"] = json.loads(dec.pop("queue_json") or "[]")
+                dec["candidates"] = json.loads(dec.pop("candidates_json") or "{}")
                 self.decisions.append(dec)
                 self.decision_by_id[int(dec["decision_id"])] = dec
                 t_key = round(float(dec["sim_t"]), 2)
@@ -298,6 +300,10 @@ class ShopfloorStateReconstructor:
         machine["current_job"] = None
         machine["queue_len"] = len(machine["queue"])
 
+        # The queue override can change the aggregate count, so recompute it from the
+        # final per-machine state rather than keeping the timeline-only value.
+        state["summary"]["num_waiting_jobs"] = sum(m["queue_len"] for m in state["machines"])
+
         state["target_decision"] = self._decision_info(dec)
         return state
 
@@ -377,6 +383,22 @@ class ShopfloorStateReconstructor:
         how simultaneous same-timestamp decisions are ordered); otherwise ``tie`` decides
         ("post" -> processing, "pre" -> waiting).
         """
+        # An operation flagged `completed=0` started but never finished before the episode
+        # ended: its recorded `end_t` is only the expected completion time, so it must
+        # remain "processing" for every t after it began.
+        if int(op.get("completed", 1)) == 0:
+            if op["begin_t"] < t:
+                return "processing"
+            if op["begin_t"] == t:
+                # Respect the same-timestamp tie rule as a completed operation: the
+                # decision that starts this operation is still pre-decision for itself.
+                if cutoff is not None:
+                    op_did = op.get("decision_id")
+                    return "processing" if (op_did is not None and op_did < cutoff) else "waiting"
+                return "processing" if tie == "post" else "waiting"
+            if op["arrival_t"] <= t:
+                return "waiting"
+            return "future"
         if op["end_t"] <= t:
             return "done"
         if op["begin_t"] < t:
@@ -461,17 +483,22 @@ class ShopfloorStateReconstructor:
         # Operations on a machine are sequential, so only the latest started op can span t.
         # First check the last op that started strictly before t.
         idx = bisect_left(begin_times, t) - 1
-        if idx >= 0 and ops[idx]["end_t"] > t:
-            return ops[idx]
+        if idx >= 0:
+            op = ops[idx]
+            # An incomplete operation never releases the machine, even past its expected end.
+            if int(op.get("completed", 1)) == 0 or op["end_t"] > t:
+                return op
         # Then the (at most one) op starting exactly at t.
         j = bisect_left(begin_times, t)
-        if j < len(ops) and ops[j]["begin_t"] == t and ops[j]["end_t"] > t:
-            if cutoff is not None:
-                op_did = ops[j].get("decision_id")
-                if op_did is not None and op_did < cutoff:
-                    return ops[j]
-            elif tie == "post":
-                return ops[j]
+        if j < len(ops) and ops[j]["begin_t"] == t:
+            op = ops[j]
+            if int(op.get("completed", 1)) == 0 or op["end_t"] > t:
+                if cutoff is not None:
+                    op_did = op.get("decision_id")
+                    if op_did is not None and op_did < cutoff:
+                        return op
+                elif tie == "post":
+                    return op
         return None
 
     def _breakdown(self, m_idx: int, t: float) -> Optional[Dict[str, Any]]:

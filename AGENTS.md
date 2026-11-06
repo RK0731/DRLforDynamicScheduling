@@ -33,34 +33,34 @@ In a job shop with $M$ machines (`m_no`), jobs arrive dynamically over time rath
 ## 2. Architecture & Module Guide
 
 ### 2.1 Entry Point & Utilities
-- `main.py`: CLI parser that maps user flags into `Simulator.run(**kwargs)`.
+- `main.py`: CLI parser that validates numeric ranges and maps flags into `Simulator.run(**kwargs)` (single process) or `SimulatorMultiThread(**kwargs)` (`-mt/--multi_thread`). Default scheduler is `ORTools`; `-y/--force` enables non-interactive stochastic runs, and `--no-random_MTBF` disables exponential MTBF sampling.
 - `src/utilities.py`:
-  - `setup_logger(stream, keep=3)`: Creates a timestamped directory under `logs/<YYYYMMDD-HHMMSSffffff>/sim.log`, prunes older log folders beyond `keep=3` (retaining only the 3 most recent text log folders while preserving `logs/simulation.db`), logs `DEBUG` details to `sim.log`, and streams `INFO` summaries to console.
-  - `SimulationDatabase(db_path)`: Manages the persistent SQLite database (`logs/simulation.db` by default) containing 7 relational tables (`runs`, `jobs`, `operations`, `decisions`, `breakdowns`, `schedule_cycles`, `sim_events`) with WAL mode and foreign key constraints. Uses a streaming persistence strategy: `create_run` inserts the `runs` row upfront, `append_events` streams `sim_events` in batches (triggered by `Recorder.FLUSH_EVENTS_THRESHOLD`), `append_children` flushes the smaller tables once at the end, and `finalize_run` updates the `runs` row with final KPIs. The `decisions` table stores the authoritative per-decision replay snapshot (`queue_json`, `chosen_pos`, `candidates_json` keyed by `j_idx`) plus reserved DRL columns.
-  - `draw_gantt_chart(logger, recorder, **kwargs)`: Plots each job's operations (`recorder.j_operation_dict`) as color-coded horizontal bars and overlays machine breakdowns (`recorder.m_bkd_dict`) as hatched white bars, saving `gantt_chart.png` inside the active log folder.
+  - `setup_logger(stream, keep=3, prune=True)`: Creates a timestamped directory under `logs/<YYYYMMDD-HHMMSSffffff>/sim.log`, prunes older log folders beyond `keep=3` (retaining only the 3 most recent text log folders while preserving `logs/simulation.db`), logs `DEBUG` details to `sim.log`, and streams `INFO` summaries to console. Multi-process workers pass `prune=False`; only the parent prunes. `_prune_log_dirs()` is best-effort and tolerates concurrent deletion.
+  - `SimulationDatabase(db_path, init_schema=True)`: Manages the persistent SQLite database (`logs/simulation.db` by default) containing 7 relational tables (`runs`, `jobs`, `operations`, `decisions`, `breakdowns`, `schedule_cycles`, `sim_events`) with WAL mode and foreign key constraints. Uses a streaming persistence strategy: `create_run` inserts the `runs` row upfront with `status='running'`, `append_events` streams `sim_events` in batches (triggered by `Recorder.FLUSH_EVENTS_THRESHOLD`), `append_children` flushes the smaller tables once at the end, and `finalize_run` marks the run `completed` and updates final KPIs. `fail_run()` marks a partially executed run `failed` and stores the traceback in `runs.error`. `_migrate_schema()` adds new columns (`runs.status/error`, `operations.completed`, DRL decision columns) and drops the legacy `decisions.rule_picks_json`. The `decisions` table stores the authoritative per-decision replay snapshot (`queue_json`, `chosen_pos`, `candidates_json` keyed by `j_idx`) plus reserved DRL columns.
+  - `draw_gantt_chart(logger, recorder, **kwargs)`: Plots each job's operations (`recorder.j_operation_dict`) as color-coded horizontal bars and overlays machine breakdowns (`recorder.m_bkd_dict`) as hatched white bars, saving `gantt_chart.png` inside the active log folder. `matplotlib` is imported lazily and a missing install only skips the chart.
 
 ### 2.2 Discrete-Event Simulator (`src/simulator/`)
 Built on **SimPy** (`simpy.Environment`):
 - `src/simulator/simulator.py`:
-  - `Simulator` & `SimulatorMultiThread`: Single-process and multi-process wrappers around `Shopfloor`.
-  - `Shopfloor`: Instantiates `simpy.Environment`, `Recorder`, `Machine` list (`m_list`), and `Narrator`. Runs `env.run(until=span + 1000)` so all jobs arriving within `[0, span]` complete their remaining operations.
+  - `Simulator` & `SimulatorMultiThread`: Single-process and multi-process wrappers around `Shopfloor`. `SimulatorMultiThread` spawns a module-level `_run_shopfloor(kwargs)` worker (the `Shopfloor` itself is not picklable on macOS/Windows spawn), derives a distinct seed per worker, initializes the SQLite schema once in the parent (avoiding `database is locked` races), and re-raises if any worker exits non-zero.
+  - `Shopfloor`: Instantiates `simpy.Environment`, `Recorder`, `Machine` list (`m_list`), and `Narrator`. Runs `env.run(until=span + 1000)` so all jobs arriving within `[0, span]` complete their remaining operations. `run_simulation()` wraps the episode in `try/except`: on failure it calls `Recorder.fail_run()` (marking the `runs` row `failed` with the traceback) and re-raises so the CLI exits non-zero. `verify_simulation_setting()` refuses to call `input()` when stdin is not a TTY unless `force=True` (`-y/--force`).
 - `src/simulator/event.py`:
   - `Narrator`:
     - Spawns `process_job_creation()`: Generates jobs at pre-sampled exponential intervals, registers them in `recorder.in_system_jobs`, triggers `central_scheduler.build_schedule_event` (if in optimization mode), and routes each job to its first machine.
     - Spawns `process_machine_breakdown(m, random_MTBF, random_MTTR)` for each machine: Waits for `MTBF`, waits for any in-progress operation on `m` to complete, sets `m.working_event = env.event()` and `m.status = "down"`, triggers `central_scheduler.build_schedule_event`, waits for the repair duration `bkd_t`, records `[actual_begin, actual_end]` in `recorder.m_bkd_dict[m.m_idx]`, and triggers `m.working_event.succeed()`.
-    - `post_simulation()`: Verifies all jobs completed, checks for schedule-execution start-time mismatches (when `pt_cv == 0` and `random_MTTR == False`), and prints tabulated configuration and KPI summaries.
-  - `Recorder`: Central state & statistics store shared across all entities (`in_system_jobs`, `j_operation_dict`, `j_tardiness_dict`, `j_flowtime_dict`, `m_bkd_dict`, decision counters `sqc_cnt_opt`, `sqc_cnt_SI`, `sqc_cnt_reactive`, `sqc_cnt_passive`). Buffers structured rows for `operations`, `decisions`, `breakdowns`, `schedule_cycles`, and `sim_events`; `record_decision(...)` captures the exact pre-decision queue and candidate features.
+    - `post_simulation()`: Verifies all jobs completed, checks for schedule-execution start-time mismatches (when `pt_cv == 0` and `random_MTTR == False`), and prints tabulated configuration and KPI summaries. Mean tardiness/flowtime divide by the number of *completed* jobs, not by all created jobs.
+  - `Recorder`: Central state & statistics store shared across all entities (`in_system_jobs`, `j_operation_dict`, `j_tardiness_dict`, `j_flowtime_dict`, `m_bkd_dict`, decision counters `sqc_cnt_opt`, `sqc_cnt_SI`, `sqc_cnt_reactive`, `sqc_cnt_passive`). Buffers structured rows for `operations`, `decisions`, `breakdowns`, `schedule_cycles`, and `sim_events`; `record_decision(...)` captures the exact pre-decision queue and candidate features. `finalize_episode()` marks the last operation of a job still processing at episode end with `completed=0` (its `end_t` is only the expected end). `start_run()` accepts `skip_db_init` so multi-process workers reuse the parent-created schema. `fail_run()` forwards a failure traceback to `SimulationDatabase.fail_run()`.
 - `src/simulator/job.py`:
   - `Job`: Dataclass holding `j_idx`, `trajectory`, `pt_by_m_idx`, `remaining_machines`, `remaining_pt` (nominal), `actual_remaining_pt` (actual), `due`, `status` (`"queuing"`, `"processing"`, `"completed"`), `available_T` (expected completion time of current operation), and `operation_record`.
   - Lifecycle hooks:
     - `after_arrival()`: Updates `arrival_T = env.now`.
-    - `after_decision(m_idx, wait)`: Called when a machine starts processing the job; records `[m_idx, env.now, actual_pt, wait]`, sets `status = "processing"`, and sets `available_T = env.now + remaining_pt[0]`.
+    - `after_decision(m_idx, wait)`: Called when a machine starts processing the job; records `[m_idx, env.now, actual_pt, wait]`, appends a structured `operations` row with `completed=1` (downgraded to `0` at episode end if still running), sets `status = "processing"`, and sets `available_T = env.now + remaining_pt[0]`.
     - `after_operation()`: Called when the operation finishes; pops the completed operation from `remaining_operations`, `remaining_machines`, `remaining_pt`, `actual_remaining_pt`, refreshes `available_T = env.now`, and returns the next machine index (or `-1` after calling `completion()`).
 - `src/simulator/machine.py`:
   - `Machine`: Models a workstation with `m_idx`, `queue`, `status` (`"idle"`, `"processing"`, `"strategic_idle"`, `"down"`), `release_T` (expected release time visible to scheduler), and `hidden_release_T` (actual release time).
   - Main loop `process_production()` has three phases per operation:
     - **Part I (Sequencing Decision)**:
-      - **Scheduled Mode (`self.schedule_mode == True`)**: Follows the centralized schedule (`CentralScheduler`). If the next scheduled job (`self.next_job_in_schedule`) has not arrived in `self.queue` yet, the machine enters **Strategic Idleness** (`status = "strategic_idle"`) and waits on `self.required_job_in_queue_event` even if other jobs are already waiting in its queue. Once the required job is in `self.queue` and the machine is operational, it calls `draw_from_schedule(m_idx)` to pop the job from the schedule and starts processing.
+      - **Scheduled Mode (`self.schedule_mode == True`)**: Follows the centralized schedule (`CentralScheduler`). If the next scheduled job (`self.next_job_in_schedule`) has not arrived in `self.queue` yet, the machine enters **Strategic Idleness** (`status = "strategic_idle"`) and waits on `self.required_job_in_queue_event` even if other jobs are already waiting in its queue. Once the required job is in `self.queue` and the machine is operational, it calls `draw_from_schedule(m_idx)` to pop the job from the schedule and starts processing. If a schedule rebuild leaves `next_job_in_schedule == -1` while jobs are queued (e.g. a removal/reschedule race), the machine logs a warning and falls back to FIFO for that decision instead of waiting forever; `CentralScheduler.update_machine_after_optimization()` also calls `notify_schedule_update()` for empty schedules so a strategic-idle machine wakes and re-evaluates. `process_idle()` re-checks the queue after resetting `sufficient_stock` so a same-timestamp arrival cannot be lost.
       - **Reactive Mode (`len(self.queue) > 1`)**: Calls heuristic rule or DRL policy (`self.job_sequencing(jobs=self.queue)`) to pick a queue position.
       - **Passive Mode (`len(self.queue) == 1`)**: Picks the sole job at index `0`.
     - **Part II (Execution)**: Calls `after_decision()`, sets `status = "processing"`, and yields `env.timeout(actual_pt)`.
@@ -68,14 +68,16 @@ Built on **SimPy** (`simpy.Environment`):
 
 ### 2.3 Centralized Scheduler & Heuristics (`src/scheduler/`)
 - `src/scheduler/sequencing_rule.py`:
-  - `SequencingMethod`: Provides classmethods for reactive dispatching rules (`FIFO`, `LIFO`, `Slack`, `CR`, `SPT`, `LWKR`) and placeholders (`GurobiOptimizer`, `ORTools`, `DRL_scheduler`).
+  - `SequencingMethod`: Provides classmethods for pure reactive dispatching rules (`FIFO`, `LIFO`, `Slack`, `CR`, `SPT`, `LWKR`). `Slack` is the true minimum-slack rule (`due - now - total_remaining_processing_time`), not EDD. Centralized solvers and the DRL policy are intentionally not defined here (no dummy placeholders).
 - `src/scheduler/scheduler.py`:
+  - `OPTIMIZATION_SOLVERS = {"GurobiOptimizer": GurobiOptimizer, "ORTools": ORTools}` — the single registry of centralized backends. `resolve_optimization_solver(sqc_method)` returns the backing class (or `None` for heuristics), and `is_optimization_scheduler(sqc_method)` is the predicate used by `Narrator` / `Shopfloor`. `sqc_method` may be a registry name string, a solver class, or a heuristic callable.
+  - `CentralScheduler` accepts an optional injected `solver_cls` for one-off experiments; otherwise it resolves the backend from `OPTIMIZATION_SOLVERS`. Overriding `OPTIMIZATION_SOLVERS["ORTools"]` replaces the backend while keeping the CLI name `-sqc ORTools`.
   - `CentralScheduler`:
     - Runs `solve_problem_process()` which waits on `self.build_schedule_event` (triggered upon any new job arrival or machine breakdown).
     - Extracts remaining unstarted operations for all `in_system_jobs`:
       - If `job.status == "queuing"`: all `job.remaining_machines` are unstarted.
       - If `job.status == "processing"`: `job.remaining_machines[0]` is already executing, so only `job.remaining_machines[1:]` are unstarted.
-    - Checks pairwise machine intersections (`self.job_intersections`). If $\le 1$ job is in the system or no remaining trajectories share a machine, calls `solve_without_optimization()` (passive schedule). Otherwise invokes `GurobiOptimizer` or `ORTools`.
+    - Checks pairwise machine intersections (`self.job_intersections`). If $\le 1$ job is in the system or no remaining trajectories share a machine, calls `solve_without_optimization()` (passive schedule). Otherwise invokes the backend resolved from `OPTIMIZATION_SOLVERS` (`GurobiOptimizer` or `ORTools`, or an injected `solver_cls`). If the backend returns no usable mapping (infeasible/unknown/no incumbent), it logs a warning, calls `solve_without_optimization()`, and records `<STATUS>_PASSIVE_FALLBACK` in `schedule_cycles.solver_status`.
     - `convert_to_schedule(varOpBeginT)`: Sorts all remaining operations $(j, m)$ chronologically by optimized start time `varOpBeginT[j, m]` to construct `self.schedule[m_idx]` (ordered list of `j_idx`) and `self.j_op_by_schedule[j_idx]` (list of `(m_idx, expected_begin_T)`), then calls `update_machine_after_optimization()`.
   - `GurobiOptimizer`:
     - Formulates a Mixed-Integer Linear Program (MILP) using linear Big-M disjunctive constraints on binary precedence variables `varJobPrec[j1, j2, m]` and continuous start times `varOpBeginT[j, m]`.
@@ -83,10 +85,12 @@ Built on **SimPy** (`simpy.Environment`):
       1. **Tier 1**: Minimize cumulative tardiness $\sum_j T_j$;
       2. **Tier 2**: Minimize schedule makespan $C_{\max}$;
       3. **Tier 3**: Minimize sum of operation start times $\sum_{j, m} b_{j, m}$ (eliminating lazy delays).
+    - Guards `model.SolCount == 0` (infeasible/unbounded/no incumbent) and returns `None` so `CentralScheduler` can fall back to the passive schedule instead of reading undefined `.X` values.
   - `ORTools`:
     - Formulates a Constraint Programming (CP-SAT) model using `NewIntervalVar` and `AddNoOverlap`.
     - **Time Scaling Invariant (`SCALE = 10`)**: Because SimPy timestamps and durations can have `0.1` decimal resolution (from `random_MTBF`, `random_MTTR`, or `pt_cv`), `ORTools` scales all time values by `10` into integer tenths of a time unit inside CP-SAT and divides solved start times by `10.0`.
-    - Minimizes the combined 3-tier hierarchical objective (`var_cum_tardiness * 10_000_000 + var_makespan * 10_000 + var_sum_op_begin_t`).
+    - Optimizes the 3-tier hierarchy **lexicographically with two staged solves** (not fixed weights): stage 1 minimizes cumulative tardiness; stage 2 constrains tardiness to the stage-1 optimum and minimizes `makespan * W + sum(start)` with `W > max_possible_sum(start)`. If stage 2 fails, the stage-1 feasible solution is reused. If stage 1 is infeasible/unknown, returns `None` so the scheduler falls back to the passive schedule. This avoids the previous weight leak where 1 unit of tardiness could be traded for 1000 units of makespan.
+  - Both backends are imported lazily inside `solve_scheduling_problem`, so heuristic-only runs do not require `gurobipy` or `ortools`.
 
 ### 2.4 Deep Multi-Agent Reinforcement Learning (`src/DRL/`)
 - `src/DRL/brain_sequencing.py`:
@@ -128,3 +132,40 @@ Built on **SimPy** (`simpy.Environment`):
    - Simultaneous (same-timestamp) decisions must be ordered by `decision_id`: a job starting exactly at `t` is "processing" iff its own decision id precedes the decision being reconstructed (`snapshot_at_decision`); a pure `snapshot(t)` uses `tie` instead.
    - Queue arrival order for other machines is recovered from `sim_events.JOB_IN.event_id` (insertion order), falling back to `(arrival_t, j_idx)`. Do not reorder by `j_idx` alone.
    - Expected (`release_T`, `remaining_expected_pt`, `breakdown.expected_remaining`) and actual (`hidden_release_T`, `remaining_actual_pt`, `breakdown.actual_remaining`) values must remain distinct in reconstructed states, mirroring invariant 2.
+   - An operation with `completed=0` started but never finished before the episode ended; it remains `processing` for every reconstructed time after `begin_t`, even past its recorded (expected) `end_t`.
+6. **Solver Failure Is Never Dispatched**:
+   - A solver must return `None` (not a partial/undefined solution) when it has no feasible incumbent (`INFEASIBLE`, `UNKNOWN`, Gurobi `SolCount == 0`, etc.).
+   - `CentralScheduler` must check the returned mapping and fall back to `solve_without_optimization()` (passive schedule), recording `<STATUS>_PASSIVE_FALLBACK` in `schedule_cycles.solver_status`. Never call `convert_to_schedule()` on an empty/undefined solution.
+7. **Run Lifecycle (`runs.status` / `runs.error`)**:
+   - `create_run` inserts `status='running'`; `finalize_run` sets `status='completed'` and clears `error`; `fail_run` sets `status='failed'` and stores the traceback.
+   - `Shopfloor.run_simulation()` must mark the run failed and re-raise on any exception after `start_run`, so a failed episode is distinguishable from an in-progress or successfully completed one.
+8. **Multi-Process Safety**:
+   - The parent of `SimulatorMultiThread` initializes/migrates the SQLite schema once; workers pass `skip_db_init=True`. Letting workers run `PRAGMA journal_mode = WAL` concurrently can fail with `database is locked`.
+   - Workers must construct `Shopfloor` inside the child via the module-level `_run_shopfloor(kwargs)`; never pass a live `Shopfloor`/SimPy generator through `multiprocessing`.
+   - Only the parent prunes log directories; workers use `prune_logs=False`.
+9. **Non-Interactive Execution**:
+   - `verify_simulation_setting()` must not call `input()` when `sys.stdin.isatty()` is false. Require explicit `force=True` (`-y/--force`); `force=True` bypasses the prompt unconditionally (even on a TTY). Without `force`, non-TTY stdin raises `SimulatorError` and exits non-zero.
+
+---
+
+## 4. Verification Before Handing Off
+
+Run the test suite after **any** change to the simulator, schedulers, database, or reconstruction code:
+
+```bash
+python -m unittest discover -s tests -t . -v
+# equivalents: python test.py   or   make test
+```
+
+The suite is stdlib-`unittest` only (pytest is not required). `tests/base.py` monkeypatches `src.utilities.LOG_ROOT_DIR` / `DEFAULT_DB_PATH` and exports `SIM_LOG_ROOT`, and every test uses a temporary database, so tests never pollute the project's `logs/simulation.db` or retained log folders.
+
+What the suite enforces:
+
+- **Project integrity:** every `src/`/`main.py`/`test.py` source compiles, core modules import, the scheduler registry/rules are complete, and required artifacts exist.
+- **Rules:** concrete in-range indices; `LIFO` never returns `-1`; `Slack` subtracts remaining work.
+- **Solvers:** CP-SAT lexicographic stage 1/2, `SCALE=10` precision, and `None` on `INFEASIBLE`/`UNKNOWN`; registry resolution.
+- **Simulation:** all jobs complete with exactly `m_no` operations and one visit per machine; `queue_json[chosen_pos] == j_idx`; `chosen_pos` in range; candidate keys match the queue; FK integrity; scheduled starts align with actual starts under deterministic settings.
+- **Failure paths:** solver fallback to passive schedule, solver exception → `runs.status='failed'` + re-raise, non-interactive stochastic guard, multi-process workers complete with distinct seeds.
+- **Reproducibility/streaming:** identical seeds produce identical KPIs/operations; forcing a tiny `FLUSH_EVENTS_THRESHOLD` preserves the full `sim_events` count.
+- **DB/reconstruction:** schema migration, `runs.status/error` lifecycle, `operations.completed`, and exact per-decision replay/summary counts.
+- **CLI:** defaults, `--no-random_MTBF`, `-y`, `-mt/-tn`, numeric validation, and subprocess exit codes.

@@ -89,13 +89,17 @@ class Narrator:
                 self.central_scheduler = CentralScheduler(**self.kwargs)
                 self.opt_mode = True
                 job_sequencing_func = self.central_scheduler.draw_from_schedule
+                solver_name = getattr(self.sqc_method, '__name__', str(self.sqc_method))
                 self.logger.info(
-                    f"Optimization mode is ON, A [centralized {self.sqc_method.__name__} scheduler] is created, "
+                    f"Optimization mode is ON, A [centralized {solver_name} scheduler] is created, "
                     f"all machines use a central schedule"
                 )
             else:
-                # Reactive heuristic sequencing rule (e.g., FIFO, LIFO, Slack, CR) or DRL agent
+                # Reactive heuristic sequencing rule (e.g., FIFO, LIFO, Slack, CR) or DRL agent.
+                # Accept either a callable or a heuristic name string for API convenience.
                 job_sequencing_func = kwargs['sqc_method']
+                if isinstance(job_sequencing_func, str):
+                    job_sequencing_func = getattr(SequencingMethod, job_sequencing_func)
                 self.logger.info(f"Machine use [{job_sequencing_func.__name__}] sequencing rule")
         else:
             # Default fallback sequencing rule is FIFO
@@ -360,13 +364,18 @@ class Narrator:
 
         # 5. Format and log performance metrics (Tardiness and Flowtime)
         mean_tard = max_tard = mean_flow = max_flow = None
-        if self.recorder.j_tardiness_dict and self.j_idx > 0:
+        # Divide by the number of *completed* jobs, not by all created jobs: a run that is
+        # cut off mid-operation would otherwise understate the mean KPIs.
+        completed_tard = len(self.recorder.j_tardiness_dict)
+        completed_flow = len(self.recorder.j_flowtime_dict)
+        if completed_tard and self.j_idx > 0:
             cum_tard = sum(self.recorder.j_tardiness_dict.values())
             max_tard = round(float(max(self.recorder.j_tardiness_dict.values())), 2)
-            mean_tard = round(float(cum_tard / self.j_idx), 2)
-            cum_flow = sum(self.recorder.j_flowtime_dict.values())
-            max_flow = round(float(max(self.recorder.j_flowtime_dict.values())), 2)
-            mean_flow = round(float(cum_flow / self.j_idx), 2)
+            mean_tard = round(float(cum_tard / completed_tard), 2)
+            if completed_flow:
+                cum_flow = sum(self.recorder.j_flowtime_dict.values())
+                max_flow = round(float(max(self.recorder.j_flowtime_dict.values())), 2)
+                mean_flow = round(float(cum_flow / completed_flow), 2)
             self.logger.info(
                 'Performance:\n{}\n'.format(
                     tabulate(
@@ -403,16 +412,23 @@ class Narrator:
 
     def build_sqc_experience_repository(self, m_list: List[Machine]) -> None:
         """Initialize per-machine experience dictionaries for DRL sequencing training."""
-        self.incomplete_experience = {}
+        # Single canonical buffer name shared with `Brain` and `Machine.complete_experience`:
+        # `incomplete_rep_memo[m_idx][decision_t] = [s_t, a_t]` until the operation completes.
+        self.incomplete_rep_memo = {}
         self.rep_memo = {}
+        # Reward bookkeeping used by `complete_experience` / training diagnostics.
+        self.sqc_reward_record = []
+        self.reward_record = {m.m_idx: [[], []] for m in m_list}
         for m in m_list:
-            self.incomplete_experience[m.m_idx] = {}  # stores partial transitions [s_0, a_0] at decision point
-            self.rep_memo[m.m_idx] = []  # stores completed transitions [s_0, a_0, s_1, r_0]
+            self.incomplete_rep_memo[m.m_idx] = {}  # partial transitions [s_0, a_0] at decision point
+            self.rep_memo[m.m_idx] = []  # completed transitions [s_0, a_0, s_1, r_0]
+        # Backwards-compatible alias for older call sites.
+        self.incomplete_experience = self.incomplete_rep_memo
 
     def complete_experience(self, m_idx: int, decision_point: float, r_t: float) -> None:
         """Complete a partial experience tuple by appending reward `r_t` and moving it to `rep_memo`."""
-        self.incomplete_experience[m_idx][decision_point] += [r_t]
-        complete_exp = self.incomplete_experience[m_idx].pop(decision_point)
+        self.incomplete_rep_memo[m_idx][decision_point] += [r_t]
+        complete_exp = self.incomplete_rep_memo[m_idx].pop(decision_point)
         self.rep_memo[m_idx].append(complete_exp)
         self.reward_record[m_idx][0].append(self.env.now)
         self.reward_record[m_idx][1].append(r_t)
@@ -471,7 +487,10 @@ class Recorder:
         Instantiate the persistent `SimulationDatabase`, create the `runs` row upfront, and return
         the assigned `run_id`. Must be called once before the SimPy environment begins executing.
         """
-        self.db = SimulationDatabase(db_path=db_path)
+        self.db = SimulationDatabase(
+            db_path=db_path,
+            init_schema=not getattr(self, "skip_db_init", False),
+        )
         self.run_id = int(self.db.create_run(run_record))
         return self.run_id
 
@@ -613,10 +632,26 @@ class Recorder:
                     json.dumps(job.initial_actual_pt),
                 )
             )
+        # A job still processing when the episode ends has only an *expected* end time for
+        # its last operation. Flag that row as incomplete so offline reconstruction does
+        # not incorrectly treat the operation (and job) as finished.
+        incomplete_last_ops = {
+            int(job.j_idx): len(job.operation_record) - 1
+            for job in self.all_jobs_dict.values()
+            if job.completion_T is None
+            and job.status == "processing"
+            and job.operation_record
+        }
+        operations_records = []
+        for row in self.operations_list:
+            if incomplete_last_ops.get(int(row[0])) == int(row[1]):
+                row = (*row[:-1], 0)
+            operations_records.append(row)
+
         self.db.append_children(
             run_id=self.run_id,
             jobs_records=jobs_records,
-            operations_records=self.operations_list,
+            operations_records=operations_records,
             breakdowns_records=[tuple(b) for b in self.breakdowns_list],
             schedule_cycles_records=self.schedule_cycles_list,
             decisions_records=self.decisions_list,
@@ -625,4 +660,9 @@ class Recorder:
         # 3. Finalize the `runs` row with summary KPIs
         self.db.finalize_run(self.run_id, kpi_record)
         return int(self.run_id)
+
+    def fail_run(self, error: str) -> None:
+        """Mark this episode's `runs` row as failed (called from `Shopfloor.run_simulation`)."""
+        if self.db is not None and self.run_id is not None:
+            self.db.fail_run(self.run_id, error)
 

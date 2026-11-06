@@ -15,7 +15,7 @@ The project tackles the **Dynamic Job Shop Scheduling Problem (DJSSP)** under re
 
 - **Python**: `>= 3.10`
 - **Dependencies**: Listed in `requirements.txt` (`simpy`, `numpy`, `ortools`, `gurobipy`, `torch`, `matplotlib`, `tabulate`, etc.)
-- **Solver Note**: A valid **Gurobi** license is required to use the default `GurobiOptimizer` scheduler. If you do not have a Gurobi license, use the `ORTools` CP-SAT solver (`-sqc ORTools`) or any heuristic sequencing rule.
+- **Solver Note**: The default scheduler is Google **OR-Tools CP-SAT** (`-sqc ORTools`), which needs no license. **Gurobi** (`-sqc GurobiOptimizer`) is optional and requires a valid license. Both optimization backends are imported lazily, so heuristic-only runs work even if neither package is installed.
 
 ## Project Structure
 
@@ -34,7 +34,7 @@ The project tackles the **Dynamic Job Shop Scheduling Problem (DJSSP)** under re
 │   │   └── reward_function.py      # Reward function definitions
 │   ├── scheduler/                  # Centralized production schedulers and heuristic dispatching rules
 │   │   ├── scheduler.py            # CentralScheduler, GurobiOptimizer (MILP), and ORTools (CP-SAT)
-│   │   ├── sequencing_rule.py      # Heuristic rules (FIFO, LIFO, Slack, CR, SPT, LWKR) & placeholders
+│   │   ├── sequencing_rule.py      # Pure heuristic rules (FIFO, LIFO, Slack, CR, SPT, LWKR)
 │   │   └── ORToolsJSP.py           # Standalone OR-Tools CP-SAT JSSP example
 │   ├── simulator/                  # SimPy discrete-event simulator
 │   │   ├── simulator.py            # Simulator, SimulatorMultiThread, and Shopfloor classes
@@ -47,24 +47,36 @@ The project tackles the **Dynamic Job Shop Scheduling Problem (DJSSP)** under re
 │   │   └── __main__.py             # CLI: python -m src.analysis --run_id 1 --time 77.0
 │   └── utilities.py                # Logger configuration, SQLite persistence, and Gantt chart plotting
 ├── main.py                         # Main CLI entry point to run simulations
+├── test.py                         # Convenience runner for the unittest suite
+├── Makefile                        # `make test` alias for the verification suite
+├── tests/                          # Stdlib-unittest verification suite (isolated temp DB/logs)
 ├── README.md                       # Project documentation
 └── requirements.txt                # Python package dependencies
 ```
 
 ## Quick Start & Usage
 
-Run `main.py` for a demonstration (defaults to 5 machines, nominal span of 100 time units, 60% expected utilization, and `GurobiOptimizer`):
+Run `main.py` for a demonstration (defaults to 5 machines, nominal span of 100 time units, 60% expected utilization, and the `ORTools` CP-SAT scheduler):
 
 ```bash
 python main.py
 ```
 
-No Gurobi license? Use Google **OR-Tools** (`ORTools`) or a heuristic rule (`FIFO`, `LIFO`, `Slack`, `CR`, `SPT`, `LWKR`):
+Use Google **OR-Tools** explicitly, a heuristic rule (`FIFO`, `LIFO`, `Slack`, `CR`, `SPT`, `LWKR`), or Gurobi (license required):
 
 ```bash
 python main.py -sqc ORTools
 python main.py -sqc CR -seed 42
+python main.py -sqc GurobiOptimizer   # requires a valid Gurobi license
 ```
+
+Run two independent episodes in parallel worker processes (each gets a distinct derived seed and its own `runs` row):
+
+```bash
+python main.py -sqc FIFO -mt -tn 2 -seed 42
+```
+
+Stochastic occupation times (`-pt_v` / `-rnd_mttr`) with an optimization scheduler normally ask for confirmation. In CI or piped runs, pass `-y/--force` to proceed non-interactively; without it the run aborts with a clear error instead of hanging or silently skipping the prompt.
 
 ### Command-Line Arguments
 
@@ -80,21 +92,32 @@ python main.py -sqc CR -seed 42
 | `-pt_cv` | `--pt_cv` | `0.1` | Coefficient of variation (CV) when `-pt_v` is enabled |
 | `-mbkd` | `--machine_breakdown` | `True` | Flag to disable machine breakdowns when passed |
 | `-mtbf` | `--MTBF` | `50.0` | Mean Time Between Failures (MTBF) |
-| `-rnd_mtbf` | `--random_MTBF` | `True` | Sample time between failures from an Exponential distribution |
+| `-rnd_mtbf` | `--random_MTBF` | `True` | Sample time between failures from an Exponential distribution (enabled by default) |
+| `--no-random_MTBF` | — | — | Use a deterministic MTBF instead of sampling |
 | `-mttr` | `--MTTR` | `10.0` | Mean Time To Repair (MTTR) |
 | `-rnd_mttr` | `--random_MTTR` | `False` | Sample repair time from Uniform `[0.5 * MTTR, 1.5 * MTTR]` |
 | `-db` | `--db_path` | `logs/simulation.db` | Path to persistent SQLite database storing all simulation runs |
 | `-draw` | `--draw_gantt` | `5` | Seconds to display interactive Gantt chart (`0` disables pop-up; disabled if `span >= 250`) |
 | `-save_gantt` | `--save_gantt` | `True` | Flag to disable saving `gantt_chart.png` to the run's log directory |
 | `-ns` | `--no_stream` | `False` | Suppress console (`INFO`) log output |
-| `-sqc` | `--sqc_method` | `GurobiOptimizer` | Scheduler/rule: `GurobiOptimizer`, `ORTools`, `FIFO`, `LIFO`, `Slack`, `CR`, `SPT`, `LWKR`, `DRL_scheduler` |
+| `-y` | `--force` | `False` | Proceed without interactive confirmation (needed for stochastic occupation times + optimization scheduler when stdin is not a TTY) |
+| `-mt` | `--multi_thread` | `False` | Run independent episodes in parallel worker processes |
+| `-tn` | `--thread_no` | `1` | Number of parallel workers when `-mt` is enabled |
+| `-sqc` | `--sqc_method` | `ORTools` | Scheduler/rule: `GurobiOptimizer`, `ORTools`, `FIFO`, `LIFO`, `Slack`, `CR`, `SPT`, `LWKR` |
+
+### Solver Behavior
+
+- Both optimization backends optimize a **true lexicographic hierarchy**: (1) cumulative tardiness, (2) makespan, (3) sum of operation start times. The CP-SAT backend uses two staged solves rather than fixed weights, so one unit of tardiness can never be traded for a large makespan reduction.
+- If a solver returns `INFEASIBLE` / `UNKNOWN` / no incumbent, the scheduler logs a warning and falls back to the deterministic **passive schedule** instead of reading undefined variable values. The fallback is recorded in `schedule_cycles.solver_status` with a `_PASSIVE_FALLBACK` suffix.
+- `Slack` is the true minimum-slack rule: `due - now - total_remaining_processing_time` (it is no longer an alias for EDD).
+- Solver backends and `matplotlib` are imported lazily, so heuristic runs and the offline analysis CLI do not require a GUI or an optimization package.
 
 ### Logging & SQLite Database (`logs/simulation.db`)
 
 Every simulation episode automatically persists its full structured data into a single SQLite database (`logs/simulation.db`) across 7 relational tables:
-- `runs`: Episode configuration, parameters, and aggregate KPIs (mean/max tardiness, flowtime, utilization, wall/solver time)
+- `runs`: Episode configuration, parameters, aggregate KPIs (mean/max tardiness, flowtime, utilization, wall/solver time), plus `status` (`running` / `completed` / `failed`) and an `error` traceback for failed episodes
 - `jobs`: Per-job creation time, due date, completion time, status, tardiness, flowtime, and routing/PT JSON arrays
-- `operations`: Per-operation execution records (`m_idx`, `decision_type`, `arrival_t`, `begin_t`, `end_t`, `wait_t`, `expected_pt`, `actual_pt`, `scheduled_begin_t`)
+- `operations`: Per-operation execution records (`m_idx`, `decision_type`, `arrival_t`, `begin_t`, `end_t`, `wait_t`, `expected_pt`, `actual_pt`, `scheduled_begin_t`) and a `completed` flag (0 when the episode ended while the operation was still in progress)
 - `decisions`: Exact decision-replay snapshot — the authoritative queue at decision time (`queue_json`), the chosen position (`chosen_pos`), per-candidate features keyed by job index (`candidates_json`), plus reserved DRL columns (`state_json`, `action`, `reward`, `next_state_json`, `episode_done`)
 - `breakdowns`: Machine breakdown intervals, expected repair times, and production delays
 - `schedule_cycles`: Centralized rescheduling snapshots, solver status, solve time, and machine/job schedules
@@ -157,6 +180,33 @@ Two entry points cover the two cases:
 
 
 In addition, the 3 most recent timestamped text log folders (`logs/<timestamp>/sim.log` and `gantt_chart.png`) are retained for quick inspection.
+
+## Verification / Test Suite
+
+The `tests/` suite uses only the standard library `unittest` (no pytest dependency). Every test runs in a temporary directory and sets `SIM_LOG_ROOT`, so it never modifies `logs/simulation.db` or the project's retained log history.
+
+```bash
+# Canonical command (run from the repository root)
+python -m unittest discover -s tests -t . -v
+
+# Convenience wrappers
+python test.py
+make test
+```
+
+Coverage includes:
+
+- project-wide syntax compilation, core-module importability, and required-artifact checks;
+- all dispatching heuristics (`FIFO`, `LIFO`, `SPT`, `LWKR`, `CR`, true minimum `Slack`);
+- CP-SAT lexicographic behavior, `SCALE=10` decimal precision, and `INFEASIBLE`/`UNKNOWN` status guards;
+- full FIFO and OR-Tools episodes: job/operation counts, one visit per machine, decision `queue_json[chosen_pos] == j_idx`, candidate-key integrity, foreign-key checks, and scheduled-vs-actual start alignment;
+- same-seed reproducibility and streaming-flush event preservation;
+- solver fallback, solver-exception run failure, non-interactive `-pt_v` guard, and multi-process isolation;
+- SQLite schema migration, `runs.status`/`runs.error` lifecycle, and `operations.completed`;
+- offline state reconstruction at every recorded decision and arbitrary times;
+- CLI defaults, validation, and entry-point subprocess smoke tests.
+
+Run this suite after any simulator, scheduler, database, or reconstruction change.
 
 ### Example Simulation Output (Gantt Chart)
 

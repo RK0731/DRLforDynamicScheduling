@@ -114,6 +114,12 @@ class Machine:
                 ):
                     if self.central_scheduler is not None and self.central_scheduler.build_schedule_event.triggered:
                         yield self.env.timeout(0)
+                    elif self.next_job_in_schedule < 0 and self.queue:
+                        # The scheduler has no work for this machine. Break out to the FIFO
+                        # fallback below instead of waiting forever for the sentinel Job -1.
+                        # (With an empty queue, fall through to `process_idle` so the
+                        # machine sleeps instead of spinning on a zero-time loop.)
+                        break
                     elif not self.working_event.triggered:
                         yield self.env.process(self.process_breakdown())
                     elif len(self.queue) == 0:
@@ -126,18 +132,34 @@ class Machine:
 
                 # Refresh decision timestamp after any strategic idleness wait
                 self.decision_T = self.env.now
-                # Pop the scheduled job index from the central schedule now that the machine commits to processing it
-                scheduled_job_idx = self.job_sequencing(m_idx=self.m_idx)
-                try:
-                    self.sqc_decision_pos = [j.j_idx for j in self.queue].index(scheduled_job_idx)
-                    self.picked_j_instance = self.queue[self.sqc_decision_pos]
-                except ValueError as exc:
-                    raise SimulatorError(
-                        f"Machine {self.m_idx} trying to pick Job {scheduled_job_idx} that is not in queue!"
-                    ) from exc
+                if self.next_job_in_schedule < 0:
+                    # Defensive fallback: a schedule rebuild produced no work for this machine
+                    # while jobs are queued here (e.g., a removal/reschedule race). Processing
+                    # FIFO keeps the shopfloor live; the next reschedule will reconcile it.
+                    if not self.queue:
+                        yield self.env.process(self.process_idle())
+                        continue
+                    self.logger.warning(
+                        "Machine {} has queued jobs but no scheduled work; "
+                        "falling back to FIFO for Job {}.".format(self.m_idx, self.queue[0].j_idx)
+                    )
+                    self.sqc_decision_pos = 0
+                    self.picked_j_instance = self.queue[0]
+                    self.recorder.sqc_cnt_reactive += 1
+                    decision_type = 'Reactive (schedule fallback)'
+                else:
+                    # Pop the scheduled job index from the central schedule now that the machine commits to processing it
+                    scheduled_job_idx = self.job_sequencing(m_idx=self.m_idx)
+                    try:
+                        self.sqc_decision_pos = [j.j_idx for j in self.queue].index(scheduled_job_idx)
+                        self.picked_j_instance = self.queue[self.sqc_decision_pos]
+                    except ValueError as exc:
+                        raise SimulatorError(
+                            f"Machine {self.m_idx} trying to pick Job {scheduled_job_idx} that is not in queue!"
+                        ) from exc
 
-                self.recorder.sqc_cnt_opt += 1
-                decision_type = 'Scheduled'
+                    self.recorder.sqc_cnt_opt += 1
+                    decision_type = 'Scheduled'
 
             # TYPE II: Reactive sequencing strategy with multiple queuing jobs (decision required)
             elif len(self.queue) > 1:
@@ -212,8 +234,12 @@ class Machine:
         idl_on_msg = "{} > IDL on: Machine {} became idle".format(self.env.now, self.m_idx)
         self.logger.info(idl_on_msg)
         self.recorder.record_event(self.env.now, "INFO", "IDL_ON", m_idx=self.m_idx, message=idl_on_msg)
-        # Reset `sufficient_stock` event and wait until a new job arrives in `self.queue`
+        # Reset `sufficient_stock` event and wait until a new job arrives in `self.queue`.
+        # A job may have arrived between the caller's empty-queue check and this reset;
+        # re-check the queue so that wake-up is not lost.
         self.sufficient_stock = self.env.event()
+        if self.queue:
+            self.sufficient_stock.succeed()
         yield self.sufficient_stock
         # If a machine breakdown is active when the job arrives, wait for repair before resuming
         if not self.working_event.triggered:
@@ -328,6 +354,16 @@ class Machine:
                         message=si_end_msg,
                     )
 
+    def notify_schedule_update(self) -> None:
+        """Wake a machine blocked in strategic idleness after a schedule rebuild.
+
+        Called even when the new schedule has no work for this machine: the machine
+        must re-evaluate (and may fall back to its queue) instead of waiting forever
+        for the sentinel ``next_job_in_schedule == -1``, which can never arrive.
+        """
+        if not self.required_job_in_queue_event.triggered:
+            self.required_job_in_queue_event.succeed()
+
     def after_decision(self, decision_type: str = "Passive") -> float:
         """
         Update machine and job timing attributes immediately after a job is selected for processing.
@@ -358,6 +394,11 @@ class Machine:
         chosen_pos = self.sqc_decision_pos if self.sqc_decision_pos is not None else 0
         if chosen_pos < 0:
             chosen_pos += len(queue_job_indices)
+        if not (0 <= chosen_pos < len(queue_job_indices)):
+            raise SimulatorError(
+                f"Machine {self.m_idx} received invalid queue position "
+                f"{self.sqc_decision_pos!r} for queue length {len(queue_job_indices)}"
+            )
         self.sqc_decision_pos = chosen_pos
         self.recorder.record_decision(
             sim_t=self.env.now,
@@ -439,14 +480,24 @@ class Machine:
             self.recorder.m_cum_runtime_dict[self.m_idx] = self.cumulative_runtime
 
     def overstay_check(self) -> None:
-        """Check queued jobs and remove any job whose tardiness exceeds 200 time units."""
-        if not self.queue:
+        """Check queued jobs and remove any job whose tardiness exceeds 200 time units.
+
+        NOTE: this is currently not invoked by the simulator. It is only safe while the
+        machine is idle: removing queue entries invalidates ``sqc_decision_pos``, so it
+        must never run during an active decision/processing cycle. A reschedule is
+        triggered afterwards so the centralized schedule stops referencing removed jobs.
+        """
+        if self.status == "processing" or not self.queue:
             return
+        removed = False
         for j in list(self.queue):
             overstay = max(0.0, self.env.now - j.due)
             if overstay > 200:
                 self.queue.remove(j)
                 j.overstay()
+                removed = True
+        if removed and self.central_scheduler is not None:
+            self.central_scheduler.trigger_reschedule("OVERSTAY")
 
     def complete_experience(self) -> None:
         """
@@ -464,5 +515,10 @@ class Machine:
             complete_exp = self.event_creator.incomplete_rep_memo[self.m_idx].pop(self.decision_T)
             self.event_creator.rep_memo[self.m_idx].append(complete_exp)
         except Exception:
-            pass
+            # Never silently hide DRL wiring errors: log the full traceback instead.
+            self.logger.exception(
+                "Failed to complete DRL experience for Machine %s at t=%s",
+                self.m_idx,
+                self.decision_T,
+            )
 

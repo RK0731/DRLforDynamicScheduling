@@ -41,3 +41,12 @@ modules*
 *.DS_Store*
 *.secret
 *tests/assets*
+
+# The verification suite is intentionally version-controlled, despite the broad
+# `tests` / `*test*` patterns above.
+!tests/
+!tests/**
+!test.py
+
+# Keep test bytecode/cache artifacts out even though tests/** is re-included above.
+tests/__pycache__/

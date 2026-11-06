@@ -1,8 +1,14 @@
 """
-Heuristic sequencing rules and placeholders for centralized mathematical optimization
-and Deep Reinforcement Learning (DRL) schedulers.
-Each heuristic method accepts `jobs` (a list of `Job` instances waiting in a machine's queue)
-and returns the queue index (`int`) of the selected job.
+Reactive heuristic sequencing rules for job selection at a workstation.
+
+Each rule accepts `jobs` (the list of `Job` instances waiting in a machine's queue) and
+returns the queue index (`int`) of the selected job.
+
+Centralized mathematical-optimization schedulers (Gurobi MILP / OR-Tools CP-SAT) are
+deliberately NOT defined here. They live in `src/scheduler/scheduler.py` and are looked
+up through `OPTIMIZATION_SOLVERS`, so this class stays a clean collection of pure
+dispatching heuristics. The DRL policy is likewise supplied as a callable by `Brain`
+(it sets each machine's `job_sequencing` directly), not as a dummy rule here.
 """
 
 import inspect
@@ -25,9 +31,19 @@ class SequencingMethod:
 
     @classmethod
     def Slack(cls, jobs, *args, **kwargs) -> int:
-        """Minimum Slack / Earliest Due Date (EDD): pick the job with the smallest time remaining until its due date."""
-        s = np.array([j.due for j in jobs]) - jobs[0].env.now
-        return int(np.argmin(s))
+        """
+        Minimum Slack: pick the job with the smallest slack,
+        ``slack = time_to_due - total_remaining_processing_time``.
+
+        Note: the previous implementation returned the earliest due date (EDD), not
+        slack, because it omitted the remaining work term. EDD is still available as a
+        special case when all remaining work is equal; for a true slack rule the work
+        term must be subtracted.
+        """
+        ttd = np.array([j.due for j in jobs]) - jobs[0].env.now
+        remaining_work = np.array([sum(j.remaining_pt) for j in jobs])
+        slack = ttd - remaining_work
+        return int(np.argmin(slack))
 
     @classmethod
     def CR(cls, jobs, *args, **kwargs) -> int:
@@ -51,22 +67,6 @@ class SequencingMethod:
         """Least Work Remaining (LWKR): pick the job with the smallest total remaining processing time."""
         rem_work = np.array([sum(j.remaining_pt) for j in jobs])
         return int(np.argmin(rem_work))
-
-    @classmethod
-    # Placeholder for Gurobi optimizer; Narrator replaces this with `CentralScheduler.draw_from_schedule`
-    def GurobiOptimizer(cls, jobs, *args, **kwargs):
-        return
-
-    @classmethod
-    # Placeholder for Google OR-Tools; Narrator replaces this with `CentralScheduler.draw_from_schedule`
-    def ORTools(cls, jobs, *args, **kwargs):
-        return
-
-    @classmethod
-    # Placeholder for DRL scheduler; replaced by DRL policy action selection during training/inference
-    def DRL_scheduler(cls, jobs, *args, **kwargs):
-        return
-
 
 if __name__ == '__main__':
     print(inspect.getmembers(SequencingMethod, predicate=inspect.ismethod))
