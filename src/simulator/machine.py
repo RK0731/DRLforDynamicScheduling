@@ -6,7 +6,7 @@ either by following a heuristic sequencing rule, a centralized schedule, or a tr
 """
 
 # standard imports
-from typing import List, Union, Literal
+from typing import List, Optional, Union, Literal
 import simpy
 
 # project modules
@@ -28,6 +28,10 @@ class Machine:
         self.m_idx: int
         self.status: Literal["idle", "processing", "strategic_idle", "down"] = "idle"
         self.next_job_in_schedule: int = -1
+        # Source of truth for "strategically idle": survives the breakdown flow, which
+        # clobbers `self.status` between "down" and "idle" and would otherwise hide the
+        # fact that the machine is still waiting for its scheduled job.
+        self.in_strategic_idle: bool = False
 
         # Queue of jobs waiting at this workstation and stock-availability event
         self.queue: List[Union[Job, None]] = []
@@ -293,17 +297,8 @@ class Machine:
         if self.schedule_mode and arriving_job.j_idx == self.next_job_in_schedule:
             if not self.required_job_in_queue_event.triggered:
                 self.required_job_in_queue_event.succeed()
-                if self.status == "strategic_idle":
-                    si_end_msg = "{} > Str.Idle end: Machine {} reactivated".format(self.env.now, self.m_idx)
-                    self.logger.info(si_end_msg)
-                    self.recorder.record_event(
-                        self.env.now,
-                        "INFO",
-                        "STR_IDL_END",
-                        m_idx=self.m_idx,
-                        j_idx=arriving_job.j_idx,
-                        message=si_end_msg,
-                    )
+                if self.in_strategic_idle:
+                    self._end_strategic_idle(j_idx=arriving_job.j_idx)
 
     def check_strategic_idleness(self) -> None:
         """
@@ -314,7 +309,8 @@ class Machine:
             if not self.required_job_in_queue_event.triggered:
                 self.required_job_in_queue_event.succeed()
         else:
-            if self.status != "strategic_idle":
+            if not self.in_strategic_idle:
+                self.in_strategic_idle = True
                 self.status = "strategic_idle"
                 self.recorder.sqc_cnt_SI += 1
                 si_on_msg = "{} > STR.IDL. on: Machine {} suspended, waiting for Job {}, current queue: {}".format(
@@ -334,6 +330,27 @@ class Machine:
                 )
             self.required_job_in_queue_event = self.env.event()
 
+    def _end_strategic_idle(self, j_idx: Optional[int] = None) -> None:
+        """Close an open strategic-idleness span and record the ``STR_IDL_END`` event.
+
+        ``in_strategic_idle`` (not ``status``) is the source of truth for whether the
+        machine is strategically idle: the breakdown flow overwrites ``status`` with
+        ``"down"`` then ``"idle"``, so a machine that was strategically idle when it broke
+        down would otherwise never emit ``STR_IDL_END`` and offline reconstruction would
+        see a dangling ``STR_IDL_ON``.
+        """
+        self.in_strategic_idle = False
+        si_end_msg = "{} > Str.Idle end: Machine {} reactivated".format(self.env.now, self.m_idx)
+        self.logger.info(si_end_msg)
+        self.recorder.record_event(
+            self.env.now,
+            "INFO",
+            "STR_IDL_END",
+            m_idx=self.m_idx,
+            j_idx=j_idx,
+            message=si_end_msg,
+        )
+
     def update_status_after_new_schedule(self) -> None:
         """
         Called by CentralScheduler after a schedule rebuild updates `self.next_job_in_schedule`.
@@ -342,17 +359,8 @@ class Machine:
         if self.next_job_in_schedule in [j.j_idx for j in self.queue]:
             if not self.required_job_in_queue_event.triggered:
                 self.required_job_in_queue_event.succeed()
-                if self.status == "strategic_idle":
-                    si_end_msg = "{} > Str.Idle end: Machine {} reactivated".format(self.env.now, self.m_idx)
-                    self.logger.info(si_end_msg)
-                    self.recorder.record_event(
-                        self.env.now,
-                        "INFO",
-                        "STR_IDL_END",
-                        m_idx=self.m_idx,
-                        j_idx=self.next_job_in_schedule,
-                        message=si_end_msg,
-                    )
+                if self.in_strategic_idle:
+                    self._end_strategic_idle(j_idx=self.next_job_in_schedule)
 
     def notify_schedule_update(self) -> None:
         """Wake a machine blocked in strategic idleness after a schedule rebuild.
@@ -363,6 +371,13 @@ class Machine:
         """
         if not self.required_job_in_queue_event.triggered:
             self.required_job_in_queue_event.succeed()
+        # A strategically-idle machine whose schedule just became empty will fall back
+        # to its queue below; close the STR_IDL_* span so reconstruction does not see a
+        # dangling STR_IDL_ON.
+        if self.in_strategic_idle:
+            self._end_strategic_idle(
+                j_idx=self.next_job_in_schedule if self.next_job_in_schedule >= 0 else None
+            )
 
     def after_decision(self, decision_type: str = "Passive") -> float:
         """

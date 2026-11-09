@@ -224,5 +224,5 @@ Run this suite after any simulator, scheduler, database, or reconstruction chang
 
 ### Example Simulation Output (Gantt Chart)
 
-![Example of simulation result](doc/example.png)
+![Example of simulation result](docs/example.png)
 
