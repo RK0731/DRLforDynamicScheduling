@@ -6,7 +6,7 @@ This repository contains the source code for the research project titled **"Mult
 
 The project tackles the **Dynamic Job Shop Scheduling Problem (DJSSP)** under real-world shopfloor uncertainties (Poisson job arrivals, non-preemptive machine breakdowns, and stochastic processing times). It includes:
 1. **Discrete-Event Simulator (`src/simulator/`)**: Built on `SimPy`, modeling machines, jobs, queues, strategic idleness, and dynamic disruptions.
-2. **Centralized Production Scheduler & Heuristics (`src/scheduler/`)**: Online rescheduling via Mixed-Integer Linear Programming (**Gurobi**) and Constraint Programming (**Google OR-Tools CP-SAT**), alongside classical dispatching rules (`FIFO`, `LIFO`, `Slack`, `CR`, `SPT`, `LWKR`).
+2. **Centralized Production Scheduler & Heuristics (`src/scheduler/`)**: Online rescheduling via Mixed-Integer Linear Programming (**Gurobi** and open-source **HiGHS**) and Constraint Programming (**Google OR-Tools CP-SAT**), alongside classical dispatching rules (`FIFO`, `LIFO`, `Slack`, `CR`, `SPT`, `LWKR`).
 3. **Deep Multi-Agent Reinforcement Learning (`src/DRL/`)**: Parameter-sharing Double Deep Q-Network (DDQN) agents for decentralized real-time job sequencing.
 
 > **For AI Coding Agents & Contributors**: Please read [`AGENTS.md`](AGENTS.md) for a comprehensive architectural deep-dive, module-by-module guide, mathematical formulation, and simulation lifecycle invariants.
@@ -17,7 +17,7 @@ The project tackles the **Dynamic Job Shop Scheduling Problem (DJSSP)** under re
 - **Project manager**: [`uv`](https://docs.astral.sh/uv/) (`brew install uv`)
 - **Dependencies**: Declared in `pyproject.toml`, locked in `uv.lock`. `requirements.txt` is a generated pip-compatible export for users not using `uv`.
 - **Optional extras**: `gurobi` (Gurobi MILP backend), `plot` (Gantt chart via matplotlib), `analysis` (pandas/scikit-learn/h5py/PyYAML).
-- **Solver Note**: The default scheduler is Google **OR-Tools CP-SAT** (`-sqc ORTools`), which needs no license. **Gurobi** (`-sqc GurobiOptimizer`) is optional and requires a valid license. Both optimization backends are imported lazily, so heuristic-only runs work even if neither package is installed.
+- **Solver Note**: The default scheduler is Google **OR-Tools CP-SAT** (`-sqc ORTools`), which needs no license. **HiGHS** (`-sqc HiGHS`) is a free, open-source MILP alternative, and **Gurobi** (`-sqc GurobiOptimizer`) is optional and requires a valid license. All optimization backends are imported lazily, so heuristic-only runs work even if none of them is installed. **Coexistence note:** OR-Tools bundles its own HiGHS, which is binary-incompatible with the standalone `highspy` build — run `-sqc ORTools` and `-sqc HiGHS` in separate processes, not the same one (the test suite isolates HiGHS in a subprocess for this reason).
 
 ## Project Structure
 
@@ -35,7 +35,7 @@ The project tackles the **Dynamic Job Shop Scheduling Problem (DJSSP)** under re
 │   │   ├── pytorch_padding.py      # Variable-length sequence padding/packing reference for RNN/LSTM
 │   │   └── reward_function.py      # Reward function definitions
 │   ├── scheduler/                  # Centralized production schedulers and heuristic dispatching rules
-│   │   ├── scheduler.py            # CentralScheduler, GurobiOptimizer (MILP), and ORTools (CP-SAT)
+│   │   ├── scheduler.py            # CentralScheduler + GurobiOptimizer (MILP), ORTools (CP-SAT), HiGHS (MILP)
 │   │   ├── sequencing_rule.py      # Pure heuristic rules (FIFO, LIFO, Slack, CR, SPT, LWKR)
 │   │   └── ORToolsJSP.py           # Standalone OR-Tools CP-SAT JSSP example
 │   ├── simulator/                  # SimPy discrete-event simulator
@@ -76,10 +76,11 @@ Run `main.py` for a demonstration (defaults to 5 machines, nominal span of 100 t
 uv run python main.py
 ```
 
-Use Google **OR-Tools** explicitly, a heuristic rule (`FIFO`, `LIFO`, `Slack`, `CR`, `SPT`, `LWKR`), or Gurobi (license required):
+Use Google **OR-Tools** explicitly, a heuristic rule (`FIFO`, `LIFO`, `Slack`, `CR`, `SPT`, `LWKR`), the open-source **HiGHS** MILP backend, or Gurobi (license required):
 
 ```bash
 uv run python main.py -sqc ORTools
+uv run python main.py -sqc HiGHS           # free open-source MILP (no license)
 uv run python main.py -sqc CR -seed 42
 uv run python main.py -sqc GurobiOptimizer   # requires a valid Gurobi license
 ```
@@ -117,11 +118,12 @@ Stochastic occupation times (`-pt_v` / `-rnd_mttr`) with an optimization schedul
 | `-y` | `--force` | `False` | Proceed without interactive confirmation (needed for stochastic occupation times + optimization scheduler when stdin is not a TTY) |
 | `-mt` | `--multi_thread` | `False` | Run independent episodes in parallel worker processes |
 | `-tn` | `--thread_no` | `1` | Number of parallel workers when `-mt` is enabled |
-| `-sqc` | `--sqc_method` | `ORTools` | Scheduler/rule: `GurobiOptimizer`, `ORTools`, `FIFO`, `LIFO`, `Slack`, `CR`, `SPT`, `LWKR` |
+| `-sqc` | `--sqc_method` | `ORTools` | Scheduler/rule: `GurobiOptimizer`, `ORTools`, `HiGHS`, `FIFO`, `LIFO`, `Slack`, `CR`, `SPT`, `LWKR` |
 
 ### Solver Behavior
 
-- Both optimization backends optimize a **true lexicographic hierarchy**: (1) cumulative tardiness, (2) makespan, (3) sum of operation start times. The CP-SAT backend uses two staged solves rather than fixed weights, so one unit of tardiness can never be traded for a large makespan reduction.
+- All three optimization backends optimize a **true lexicographic hierarchy**: (1) cumulative tardiness, (2) makespan, (3) sum of operation start times. The CP-SAT and HiGHS backends use two staged solves rather than fixed weights, so one unit of tardiness can never be traded for a large makespan reduction; Gurobi uses native hierarchical objectives.
+- Unlike CP-SAT (which scales time by `10` because it is integer-only), HiGHS and Gurobi use continuous time variables, so sub-unit `0.1` precision is exact with no scaling.
 - If a solver returns `INFEASIBLE` / `UNKNOWN` / no incumbent, the scheduler logs a warning and falls back to the deterministic **passive schedule** instead of reading undefined variable values. The fallback is recorded in `schedule_cycles.solver_status` with a `_PASSIVE_FALLBACK` suffix.
 - `Slack` is the true minimum-slack rule: `due - now - total_remaining_processing_time` (it is no longer an alias for EDD).
 - Solver backends and `matplotlib` are imported lazily, so heuristic runs and the offline analysis CLI do not require a GUI or an optimization package.
@@ -213,6 +215,7 @@ Coverage includes:
 - project-wide syntax compilation, core-module importability, and required-artifact checks;
 - all dispatching heuristics (`FIFO`, `LIFO`, `SPT`, `LWKR`, `CR`, true minimum `Slack`);
 - CP-SAT lexicographic behavior, `SCALE=10` decimal precision, and `INFEASIBLE`/`UNKNOWN` status guards;
+- HiGHS (subprocess-isolated) tardiness-before-makespan ordering, continuous-time decimal precision, and a full episode's schedule/execution alignment;
 - full FIFO and OR-Tools episodes: job/operation counts, one visit per machine, decision `queue_json[chosen_pos] == j_idx`, candidate-key integrity, foreign-key checks, and scheduled-vs-actual start alignment;
 - same-seed reproducibility and streaming-flush event preservation;
 - solver fallback, solver-exception run failure, non-interactive `-pt_v` guard, and multi-process isolation;

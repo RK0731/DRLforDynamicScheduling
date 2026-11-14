@@ -762,6 +762,261 @@ class GurobiOptimizer:
         return converted_var_op_begin_t, over_extended_problem, status_name
 
 
+class HiGHSOptimizer:
+    """
+    HiGHS Mixed-Integer Linear Programming (MILP) solver (open-source, MIT license)
+    for the dynamic Job Shop Scheduling Problem. Formulates the same linear Big-M
+    disjunctive MILP as `GurobiOptimizer`, but solves it with the free HiGHS MIP solver
+    so no commercial license is required.
+
+    .. note:: OR-Tools bundles its own (older) HiGHS; the standalone ``highspy`` build
+        is binary-incompatible with it, and importing/solving both in one process can
+        segfault on macOS. A ``-sqc HiGHS`` run is unaffected (OR-Tools is only imported
+        lazily when ``ORTools`` is selected), but do not benchmark OR-Tools and HiGHS in
+        the same process (the test suite runs HiGHS in a subprocess for this reason).
+
+    Unlike `ORTools` (integer-only CP-SAT, which scales time by `SCALE = 10`), HiGHS
+    uses continuous time variables directly, so sub-unit (0.1) time precision needs no
+    scaling and there is no truncation risk.
+
+    The 3-tier hierarchical objective is enforced lexicographically with two staged
+    solves (mirroring `ORTools`):
+      1. minimize cumulative tardiness;
+      2. constrain tardiness to the stage-1 optimum and minimize
+         ``makespan * W + sum(start)`` where ``W > max_possible_sum(start)`` makes
+         makespan strictly dominate the tertiary term.
+    """
+
+    @classmethod
+    def solve_scheduling_problem(
+        cls,
+        logger: logging.Logger,
+        env,
+        m_list: List[Machine],
+        job_intersections: dict,
+        remaining_trajectories: Dict[int, list],
+        in_system_jobs: Dict[int, Job],
+    ):
+        # Lazy import: heuristic/CP-SAT-only simulations must not require HiGHS.
+        import highspy
+
+        start_t = time.time()
+        inf = highspy.kHighsInf
+        feasible_status = int(highspy.SolutionStatus.kSolutionStatusFeasible)
+
+        # Expected machine release / job availability times (visible to the scheduler).
+        machine_release_t = {m.m_idx: float(max(m.release_T, env.now)) for m in m_list}
+        job_available_t = {
+            j_idx: float(max(in_system_jobs[j_idx].available_T, env.now))
+            for j_idx in remaining_trajectories.keys()
+        }
+
+        # Valid Big-M constant for the disjunctive machine precedence constraints.
+        total_rem_pt = sum(sum(j.remaining_pt) for j in in_system_jobs.values())
+        max_release = max(
+            list(machine_release_t.values()) + list(job_available_t.values()) + [env.now]
+        )
+        big_m = float(max_release + total_rem_pt + 1000.0)
+
+        # Disjunctive precedence pairs: (j1, j2, m) for each machine shared by two jobs.
+        pair_job_prec = []
+        for (j1, j2), intersec in job_intersections.items():
+            pair_job_prec += list(itertools.product([j1], [j2], intersec))
+
+        # ----------------------------------------------------------------- columns
+        # Register each decision variable as a column index and record its bounds +
+        # integrality. Helper closures keep the index bookkeeping in one place.
+        start_col, comp_col, discr_col, tard_col, prec_col = {}, {}, {}, {}, {}
+        col_lb, col_ub, col_integrality = [], [], []
+
+        def add_col(lb, ub, integrality):
+            idx = len(col_lb)
+            col_lb.append(lb)
+            col_ub.append(ub)
+            col_integrality.append(integrality)
+            return idx
+
+        # Start time of every remaining operation b[j, m] (continuous, >= earliest
+        # possible start, <= big_m which is a safe upper bound on any schedule length).
+        for j_idx, traj in remaining_trajectories.items():
+            for m_idx in traj:
+                lb = max(machine_release_t[m_idx], job_available_t[j_idx], env.now)
+                start_col[(j_idx, m_idx)] = add_col(
+                    float(lb), big_m, highspy.HighsVarType.kContinuous
+                )
+        # Job-level timing/objective variables: completion C[j], due-date discrepancy
+        # D[j] = C[j] - due[j], and non-negative tardiness T[j] = max(0, D[j]).
+        for j_idx in remaining_trajectories.keys():
+            comp_col[j_idx] = add_col(0.0, big_m, highspy.HighsVarType.kContinuous)
+            discr_col[j_idx] = add_col(-big_m, big_m, highspy.HighsVarType.kContinuous)
+            tard_col[j_idx] = add_col(0.0, big_m, highspy.HighsVarType.kContinuous)
+        # System-level makespan and the binary job-ordering precedence variables.
+        cmax_col = add_col(0.0, big_m, highspy.HighsVarType.kContinuous)
+        for (j1, j2, m) in pair_job_prec:
+            prec_col[(j1, j2, m)] = add_col(0.0, 1.0, highspy.HighsVarType.kInteger)
+
+        # -------------------------------------------------------------------- rows
+        # Each row is a linear constraint (lower_bound, upper_bound, {col: coeff});
+        # an equality is just lower == upper.
+        rows = []
+
+        def add_row(lb, ub, coeffs):
+            rows.append((lb, ub, coeffs))
+
+        # 1. Intra-job precedence: b[j, m2] - b[j, m1] >= pt[j, m1]
+        for j_idx, traj in remaining_trajectories.items():
+            for m1, m2 in zip(traj, traj[1:]):
+                pt = float(in_system_jobs[j_idx].pt_by_m_idx[m1])
+                add_row(pt, inf, {start_col[(j_idx, m2)]: 1.0, start_col[(j_idx, m1)]: -1.0})
+        # 2. Machine release: b[j, m] >= machine_release_t[m]
+        for j_idx, traj in remaining_trajectories.items():
+            for m_idx in traj:
+                add_row(machine_release_t[m_idx], inf, {start_col[(j_idx, m_idx)]: 1.0})
+        # 3. Job availability on its first remaining operation
+        for j_idx, traj in remaining_trajectories.items():
+            add_row(job_available_t[j_idx], inf, {start_col[(j_idx, traj[0])]: 1.0})
+        # 4. Disjunctive Big-M constraints (linear, no bilinear terms):
+        #    - prec == 0 -> job j1 precedes j2 on machine m
+        #    - prec == 1 -> job j2 precedes j1 on machine m
+        for (j1, j2, m) in pair_job_prec:
+            p = prec_col[(j1, j2, m)]
+            pt1 = float(in_system_jobs[j1].pt_by_m_idx[m])
+            pt2 = float(in_system_jobs[j2].pt_by_m_idx[m])
+            # b[j1,m] - b[j2,m] - big_m * prec <= -pt1
+            add_row(-inf, -pt1, {start_col[(j1, m)]: 1.0, start_col[(j2, m)]: -1.0, p: -big_m})
+            # b[j2,m] - b[j1,m] + big_m * prec <= big_m - pt2
+            add_row(-inf, big_m - pt2, {start_col[(j2, m)]: 1.0, start_col[(j1, m)]: -1.0, p: big_m})
+        # 5. Job completion: C[j] - b[j, m_last] == pt[j, m_last]
+        for j_idx, traj in remaining_trajectories.items():
+            m_last = traj[-1]
+            pt = float(in_system_jobs[j_idx].pt_by_m_idx[m_last])
+            add_row(pt, pt, {comp_col[j_idx]: 1.0, start_col[(j_idx, m_last)]: -1.0})
+        # 6. Completion discrepancy: D[j] - C[j] == -due[j]
+        for j_idx in remaining_trajectories.keys():
+            add_row(-float(in_system_jobs[j_idx].due), -float(in_system_jobs[j_idx].due),
+                    {discr_col[j_idx]: 1.0, comp_col[j_idx]: -1.0})
+        # 7. Tardiness >= discrepancy: T[j] - D[j] >= 0 (T[j] >= 0 via its lower bound)
+        for j_idx in remaining_trajectories.keys():
+            add_row(0.0, inf, {tard_col[j_idx]: 1.0, discr_col[j_idx]: -1.0})
+        # 8. Makespan >= every job completion time
+        for j_idx in remaining_trajectories.keys():
+            add_row(0.0, inf, {cmax_col: 1.0, comp_col[j_idx]: -1.0})
+
+        # ---------------------------------------------------- LP assembly + solve
+        # `solve` builds the LP, runs HiGHS, and returns (solution, info, status_name).
+        # `solution` is None when HiGHS has no primal feasible/optimal solution (so the
+        # caller can fall back to the passive schedule instead of reading garbage).
+        def solve(rows_used, obj_cost, time_limit):
+            lp = highspy.HighsLp()
+            lp.num_col_ = len(col_lb)
+            lp.num_row_ = len(rows_used)
+            lp.col_cost_ = [obj_cost.get(c, 0.0) for c in range(len(col_lb))]
+            lp.col_lower_ = col_lb
+            lp.col_upper_ = col_ub
+            lp.row_lower_ = [r[0] for r in rows_used]
+            lp.row_upper_ = [r[1] for r in rows_used]
+            # Assemble the column-major sparse coefficient matrix. `rows` is a list of
+            # {col_index: coefficient} dicts (row-major); HiGHS wants a CSC-style
+            # (start_/index_/value_) layout, so invert to {column: [(row, coeff)]}.
+            col_entries = [[] for _ in range(len(col_lb))]
+            for r_i, (_, _, coeffs) in enumerate(rows_used):
+                for c, coef in coeffs.items():
+                    if coef:
+                        col_entries[c].append((r_i, coef))
+            starts, index, value = [0], [], []
+            for c in range(len(col_lb)):
+                for r_i, coef in col_entries[c]:
+                    index.append(r_i)
+                    value.append(coef)
+                starts.append(starts[-1] + len(col_entries[c]))
+            lp.a_matrix_.format_ = highspy.MatrixFormat.kColwise
+            lp.a_matrix_.start_ = starts
+            lp.a_matrix_.index_ = index
+            lp.a_matrix_.value_ = value
+            lp.sense_ = highspy.ObjSense.kMinimize
+            lp.integrality_ = col_integrality
+
+            h = highspy.Highs()
+            h.setOptionValue("output_flag", False)
+            h.setOptionValue("time_limit", time_limit)
+            h.passModel(lp)
+            h.run()
+            info = h.getInfo()
+            status_name = h.modelStatusToString(h.getModelStatus())
+            if int(info.primal_solution_status) != feasible_status:
+                return None, None, status_name
+            return h.getSolution(), info, status_name
+
+        # ---- Stage 1: minimize cumulative tardiness ---------------------------
+        stage1_obj = {tard_col[j_idx]: 1.0 for j_idx in remaining_trajectories.keys()}
+        sol1, info1, status1 = solve(rows, stage1_obj, 10.0)
+        if sol1 is None:
+            time_expense = round(time.time() - start_t, 3)
+            logger.warning(
+                "HiGHS found no feasible schedule (status={}, {:.3f}s); "
+                "the passive schedule will be used.".format(status1, time_expense)
+            )
+            return None, None, status1
+
+        opt_tardiness = float(info1.objective_function_value)
+
+        # ---- Stage 2: keep Tier-1 optimal, minimize makespan*W + sum(start) ---
+        # `W` strictly dominates the tertiary term so makespan is minimized first:
+        # any makespan change of 1 outweighs the entire possible range of sum(start).
+        max_sum_start = max(1.0, float(len(start_col) * big_m))
+        w = max_sum_start + 1.0
+        # Constrain cumulative tardiness to the stage-1 optimum. The `+1e-4` slack
+        # absorbs the solver's floating-point tolerances so the bound can never make
+        # a previously-optimal stage-1 solution appear infeasible in stage 2.
+        tard_sum = {tard_col[j_idx]: 1.0 for j_idx in remaining_trajectories.keys()}
+        tard_bound_row = (-inf, opt_tardiness + 1e-4, tard_sum)
+        stage2_obj = {cmax_col: w}
+        for col in start_col.values():
+            stage2_obj[col] = 1.0
+
+        sol2, info2, status2 = solve(rows + [tard_bound_row], stage2_obj, 5.0)
+        if sol2 is None:
+            # The stage-1 solution is still feasible and Tier-1 optimal; reuse it
+            # rather than dispatching an undefined / partial solution.
+            solution = sol1
+            status_name = "{}_T2_{}".format(status1, status2)
+        else:
+            solution = sol2
+            status_name = status2
+
+        time_expense = round(time.time() - start_t, 3)
+        logger.debug(
+            "HiGHS solving elapsed, model status: {}, time expense: {}s".format(
+                status_name, time_expense
+            )
+        )
+
+        # Record the problem instance if solving took longer than 1 second.
+        if time_expense > 1:
+            over_extended_problem = {
+                "Jobs": {
+                    j_idx: {
+                        "ops": [
+                            (float(m_idx), float(in_system_jobs[j_idx].pt_by_m_idx[m_idx]))
+                            for m_idx in traj
+                        ],
+                        "avail": round(float(job_available_t[j_idx]), 3),
+                    }
+                    for j_idx, traj in remaining_trajectories.items()
+                },
+                "Machines": {m: round(rt, 3) for m, rt in machine_release_t.items()},
+                "Expense": time_expense,
+            }
+        else:
+            over_extended_problem = None
+
+        converted_var_op_begin_t = {
+            key: round(float(solution.col_value[col]), 1)
+            for key, col in start_col.items()
+        }
+        return converted_var_op_begin_t, over_extended_problem, status_name
+
+
 # ---------------------------------------------------------------------------
 # Centralized-solver registry
 # ---------------------------------------------------------------------------
@@ -793,6 +1048,7 @@ class GurobiOptimizer:
 OPTIMIZATION_SOLVERS = {
     "GurobiOptimizer": GurobiOptimizer,
     "ORTools": ORTools,
+    "HiGHS": HiGHSOptimizer,
 }
 
 

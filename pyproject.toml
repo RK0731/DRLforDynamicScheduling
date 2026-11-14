@@ -10,6 +10,7 @@ dependencies = [
     "tabulate>=0.8.9,<1",
     "ortools>=9.15,<10",
     "torch>=2.6,<3",
+    "highspy>=1.15,<2",
 ]
 
 [project.optional-dependencies]

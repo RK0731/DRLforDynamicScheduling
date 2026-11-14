@@ -1,7 +1,7 @@
 # WORKNOTE — Latest Work & Pending Changes
 
 > **Maintainer handoff note.** Read this alongside [`AGENTS.md`](AGENTS.md) (architecture & invariants) and [`README.md`](README.md) (usage).
-> **Last updated:** 2026-11-06
+> **Last updated:** 2026-11-09
 
 This note records (1) the most recent work completed in this repository and (2) changes that are designed/discussed or identified but **not yet implemented**, so that agents and developers can pick up cleanly.
 
@@ -215,11 +215,35 @@ uv run python -m unittest discover -s tests -t . -v
 
 Note: if an old pyenv virtualenv is still active, `uv run` prints `VIRTUAL_ENV=... does not match the project environment path .venv`; run `deactivate` once or ignore the warning — `uv run` still uses `.venv`.
 
+### 1.11 Strategic Idleness Survives Machine Breakdown (bug fix)
+
+A machine can be strategically idle (waiting for its scheduled head job) when a breakdown hits. `Narrator.process_machine_breakdown` overwrites `Machine.status` with `"down"` then `"idle"`, so the `"strategic_idle"` marker was lost, and — because the `STR_IDL_END` guards tested `status == "strategic_idle"` — the span was never closed. Offline reconstruction (`ShopfloorStateReconstructor._strategic_idle`) would then see a dangling `STR_IDL_ON` and misreport the machine as strategically idle.
+
+**Fix:** strategic idleness is now tracked by a dedicated `Machine.in_strategic_idle` flag that the breakdown flow never touches. The flag is the source of truth for entering/exiting strategic idleness:
+
+- `check_strategic_idleness()` sets the flag (and logs `STR_IDL_ON`) based on the flag, not `status`.
+- A new `Machine._end_strategic_idle()` helper closes the span and logs `STR_IDL_END`, called from `job_arrival()`, `update_status_after_new_schedule()`, and `notify_schedule_update()` (the latter also fixes the empty-schedule FIFO-fallback path, which previously left a dangling `STR_IDL_ON`).
+
+**Verification:** 4 new unit tests in `tests/test_strategic_idle.py` (entry, breakdown-clobber survival, reschedule-close, empty-schedule-close). A real `ORTools` run with breakdowns shows `STR_IDL_ON`/`STR_IDL_END` strictly alternating per machine (0 violations).
+
+### 1.12 HiGHS MILP Solver (open-source alternative to Gurobi)
+
+Added a third centralized backend, **HiGHS** (`highspy`, MIT license), as a free open-source MILP alternative to Gurobi:
+
+- `HiGHSOptimizer` (`src/scheduler/scheduler.py`) formulates the same linear Big-M disjunctive MILP as `GurobiOptimizer`, but solves it with HiGHS — no commercial license required.
+- **Continuous time variables**: unlike CP-SAT (integer-only, `SCALE = 10`), HiGHS uses continuous times, so sub-unit `0.1` precision is exact with no truncation risk.
+- **Two-stage lexicographic objective** (mirroring `ORTools`): stage 1 minimizes cumulative tardiness; stage 2 constrains tardiness to the stage-1 optimum and minimizes `makespan * W + sum(start)`. Falls back to the stage-1 solution if stage 2 has no incumbent, and returns `None` (→ passive schedule) if stage 1 has no primal feasible solution.
+- Registered in `OPTIMIZATION_SOLVERS`, so `-sqc HiGHS` is an automatic CLI choice. `highspy` added to `pyproject.toml` / `uv.lock` / `requirements.txt`.
+
+**Important coexistence limitation (discovered during testing):** OR-Tools bundles its own (older) HiGHS, which is **binary-incompatible** with the standalone `highspy` build — loading both native libraries into one process segfaults on macOS (a `libhighs`/`libortools` symbol clash). `-sqc HiGHS` is unaffected (OR-Tools is imported lazily only when `ORTools` is selected), but **never benchmark OR-Tools and HiGHS in the same process**. The test suite isolates HiGHS in a fresh subprocess (`tests/test_highs.py`) for this reason.
+
+**Verification:** `tests/test_highs.py` (subprocess-isolated) covers tardiness-before-makespan ordering, continuous-time decimal precision (`1.5` not truncated), and a full `span=60` episode with 0 schedule/execution mismatches. Full suite: **50 tests pass**.
+
 ---
 
 ## 2. Verification Performed
 
-- Smoke-tested schedulers: `GurobiOptimizer` (license dependent), `ORTools`, `FIFO`, `LIFO`, `Slack`, `CR`, `SPT`, `LWKR`.
+- Smoke-tested schedulers: `GurobiOptimizer` (license dependent), `ORTools`, `HiGHS`, `FIFO`, `LIFO`, `Slack`, `CR`, `SPT`, `LWKR`.
 - Reproduced historic seeds (`1910729402`, `6971944126`) under `ORTools`; schedule/execution mismatches that were caused by time truncation are resolved (remaining mismatches only occur from genuine stochastic MTTR/PT cases).
 - Stochastic settings (`-pt_v`, `-rnd_mttr`, custom `-pt_r 2 12`) exercised without exceptions.
 - Multi-run DB persistence verified (runs, jobs, operations, breakdowns, schedule cycles, events).
@@ -268,7 +292,7 @@ Originally deferred ("we'll design the DRL table later"). The new `decisions` ta
 
 ### 3.5 Testing (P1 — mostly addressed)
 
-- `tests/` now contains 43 stdlib-`unittest` tests covering project-wide compilation/imports, rules, solver lexicographic/status behavior, FIFO/OR-Tools simulation invariants, same-seed reproducibility, streaming flush, solver fallback/failure, non-interactive guard, multi-process isolation, DB migration/status lifecycle, reconstruction, and CLI entry points. Run with `uv run python -m unittest discover -s tests -t . -v` (or `uv run python test.py` / `make test`).
+- `tests/` now contains 50 stdlib-`unittest` tests covering project-wide compilation/imports, rules, solver lexicographic/status behavior (CP-SAT + HiGHS), FIFO/OR-Tools simulation invariants, same-seed reproducibility, streaming flush, solver fallback/failure, non-interactive guard, multi-process isolation, DB migration/status lifecycle, reconstruction, strategic-idleness state assertions, and CLI entry points. Run with `uv run python -m unittest discover -s tests -t . -v` (or `uv run python test.py` / `make test`). Note: HiGHS tests run in a subprocess (`tests/test_highs.py`) because OR-Tools and standalone `highspy` are binary-incompatible in one process (§1.12).
 - Still worth adding: deterministic reproducibility (same seed → identical KPIs across two runs), a long-run streaming-threshold test, and explicit strategic-idleness state assertions. The Gurobi path cannot be exercised here without a valid license.
 
 ---
@@ -278,8 +302,9 @@ Originally deferred ("we'll design the DRL table later"). The new `decisions` ta
 1. Wire DRL: implement `Machine` DRL hooks + connect `Brain` to `Shopfloor`; add a `-drl` train/eval entry point.
 2. Populate the reserved DRL columns in `decisions` (`state_json`, `action`, `reward`, `next_state_json`) or add a dedicated `drl_transitions` table if multi-step replay is needed.
 3. Add `sim_events` verbosity flag and stress-test multi-process DB writes.
-4. Extend the `tests/` suite with deterministic-reproducibility, streaming-threshold, and strategic-idleness assertions (the core invariants are already covered; see §1.9).
-5. Clean up unused modules (`create_logger`, `overstay_check`, or `ORToolsJSP.py` if intended to stay as docs).
+4. **Warm starts / incremental re-solving** for the centralized solvers (CP-SAT `AddHint`, HiGHS `setSolution`, Gurobi MIP starts): reusing the previous schedule when a new job arrives can cut per-cycle solve time by an order of magnitude, and would let the hardcoded 10 s / 5 s solve budgets drop to sub-second.
+5. **HiGHS polish**: collapse the two staged solves into HiGHS' native lexicographic multi-objective (`addLinearObjective`) for a single solve, and (optionally) resolve the OR-Tools/`highspy` in-process coexistence limitation (§1.12) to allow in-process benchmarking.
+6. Clean up unused modules (`create_logger`, `overstay_check`, or `ORToolsJSP.py` if intended to stay as docs).
 
 ---
 
@@ -303,5 +328,5 @@ Originally deferred ("we'll design the DRL table later"). The new `decisions` ta
   FROM decisions WHERE run_id = 1 ORDER BY sim_t;
   ```
 - **Rebuild one decision in Python:** read `decisions.queue_json` / `candidates_json` for the chosen `(run_id, sim_t)`; no timeline reconstruction needed.
-- **Run a demo:** `uv run python main.py -sqc ORTools -seed 42 -draw 0`
+- **Run a demo:** `uv run python main.py -sqc ORTools -seed 42 -draw 0` (or `-sqc HiGHS` for the free open-source MILP backend)
 - **Inspect DB:** `sqlite3 logs/simulation.db` (`.tables`, `.schema decisions`).

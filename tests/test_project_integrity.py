@@ -40,7 +40,7 @@ class TestProjectIntegrity(unittest.TestCase):
 
     def test_scheduler_registry_and_rules_are_complete(self):
         self.assertEqual(
-            set(OPTIMIZATION_SOLVERS), {"GurobiOptimizer", "ORTools"}
+            set(OPTIMIZATION_SOLVERS), {"GurobiOptimizer", "ORTools", "HiGHS"}
         )
         for rule in ("FIFO", "LIFO", "Slack", "CR", "SPT", "LWKR"):
             self.assertTrue(callable(getattr(SequencingMethod, rule)))

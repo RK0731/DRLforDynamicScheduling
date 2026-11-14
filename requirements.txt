@@ -24,6 +24,8 @@ gurobipy==13.0.3
     # via drl-dynamic-scheduling
 h5py==3.16.0
     # via drl-dynamic-scheduling
+highspy==1.15.1
+    # via drl-dynamic-scheduling
 immutabledict==4.3.1
     # via ortools
 jinja2==3.1.6
@@ -47,6 +49,7 @@ numpy==2.5.4
     #   contourpy
     #   drl-dynamic-scheduling
     #   h5py
+    #   highspy
     #   matplotlib
     #   ortools
     #   pandas

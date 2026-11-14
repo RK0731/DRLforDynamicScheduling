@@ -10,6 +10,7 @@ from ortools.sat.python import cp_model
 
 from src.scheduler.scheduler import (
     GurobiOptimizer,
+    HiGHSOptimizer,
     ORTools,
     OPTIMIZATION_SOLVERS,
     is_optimization_scheduler,
@@ -31,10 +32,12 @@ class TestSchedulerRegistry(unittest.TestCase):
     def test_registry_contains_real_backends(self):
         self.assertIs(OPTIMIZATION_SOLVERS["ORTools"], ORTools)
         self.assertIs(OPTIMIZATION_SOLVERS["GurobiOptimizer"], GurobiOptimizer)
+        self.assertIs(OPTIMIZATION_SOLVERS["HiGHS"], HiGHSOptimizer)
 
     def test_resolve_optimization_solver(self):
         self.assertIs(resolve_optimization_solver("ORTools"), ORTools)
         self.assertIs(resolve_optimization_solver("GurobiOptimizer"), GurobiOptimizer)
+        self.assertIs(resolve_optimization_solver("HiGHS"), HiGHSOptimizer)
         self.assertIs(resolve_optimization_solver(ORTools), ORTools)
         self.assertIsNone(resolve_optimization_solver("FIFO"))
         self.assertIsNone(resolve_optimization_solver(lambda jobs: 0))
@@ -42,6 +45,7 @@ class TestSchedulerRegistry(unittest.TestCase):
     def test_is_optimization_scheduler(self):
         self.assertTrue(is_optimization_scheduler("ORTools"))
         self.assertTrue(is_optimization_scheduler("GurobiOptimizer"))
+        self.assertTrue(is_optimization_scheduler("HiGHS"))
         self.assertFalse(is_optimization_scheduler("FIFO"))
         self.assertFalse(is_optimization_scheduler("CR"))
 
